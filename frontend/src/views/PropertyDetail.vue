@@ -202,13 +202,13 @@
           <span class="reviews-count">共 {{ reviews.length }} 条评价</span>
         </div>
         <div class="reviews-list">
-          <div v-for="(r, i) in reviews" :key="i" class="review-item">
+          <div v-for="r in reviews" :key="r.userId" class="review-item">
             <div class="review-avatar">
-              <el-avatar :size="40" :style="{ background: r.avatarColor }">{{ r.avatar }}</el-avatar>
+              <el-avatar :size="40" :style="{ background: r.avatarColor }">{{ reviewAvatar(r.userName) }}</el-avatar>
             </div>
             <div class="review-body">
               <div class="review-header">
-                <span class="review-user">{{ r.user }}</span>
+                <span class="review-user">{{ maskReviewUserName(r.userName) }}</span>
                 <el-rate v-model="r.rating" disabled size="small" />
                 <span class="review-date">{{ r.date }}</span>
               </div>
@@ -312,13 +312,34 @@ const overseasFacilities = computed(() => {
   return ['健身房', '自习室', '签证咨询', '24小时前台', '校车接驳', '独立卫浴']
 })
 
-// Reviews (static mock — backend doesn't have reviews yet)
-const reviews = [
-  { user: '李明', avatar: '李', avatarColor: '#FF6B35', rating: 5, date: '2026-06-20', text: '房间很干净，采光好，房东人很nice。地铁就在楼下非常方便！', reply: '感谢李先生的认可，欢迎随时联系。' },
-  { user: 'Emily', avatar: 'E', avatarColor: '#67c23a', rating: 4.5, date: '2026-06-15', text: 'Great location and friendly landlord. The apartment has everything I need for my study abroad year.', reply: 'Thanks Emily! Happy to help with your stay.' },
-  { user: '王芳', avatar: '王', avatarColor: '#409eff', rating: 4, date: '2026-06-08', text: '配套齐全，周边买菜方便。唯一建议是洗衣机可以换个新的。', reply: '' },
-  { user: '张伟', avatar: '张', avatarColor: '#e6a23c', rating: 5, date: '2026-05-28', text: '第三次租了，每次体验都很好。平台服务也很到位，推荐！', reply: '感谢老客户的支持！' },
+interface Review {
+  userId: string
+  userName: string
+  avatarColor: string
+  rating: number
+  date: string
+  text: string
+  reply?: string
+}
+
+// Reviews (static mock - backend doesn't have reviews yet)
+const reviews: Review[] = [
+  { userId: '100876', userName: '李明', avatarColor: '#FF6B35', rating: 5, date: '2026-06-20', text: '房间很干净，采光好，房东人很 nice。地铁就在楼下，非常方便。', reply: '感谢认可，欢迎随时联系。' },
+  { userId: 'E20491', userName: 'Emily', avatarColor: '#67c23a', rating: 4.5, date: '2026-06-15', text: 'Great location and friendly landlord. The apartment has everything I need for my study abroad year.', reply: 'Thanks! Happy to help with your stay.' },
+  { userId: '300512', userName: '王芳', avatarColor: '#409eff', rating: 4, date: '2026-06-08', text: '配套齐全，周边买菜方便。唯一建议是洗衣机可以换个新的。', reply: '' },
+  { userId: '890341', userName: '张伟', avatarColor: '#e6a23c', rating: 5, date: '2026-05-28', text: '第三次租了，每次体验都很好。平台服务也很到位，推荐。', reply: '感谢老客户的支持。' },
 ]
+
+function maskReviewUserName(userName: string): string {
+  const chars = Array.from(userName.trim())
+  if (chars.length === 0) return '匿名用户'
+  if (chars.length === 1) return chars[0]
+  return `${chars[0]}${'*'.repeat(chars.length - 1)}`
+}
+
+function reviewAvatar(userName: string): string {
+  return Array.from(userName.trim())[0] || '匿'
+}
 
 const avgRating = computed(() => {
   if (reviews.length === 0) return 0
@@ -791,6 +812,13 @@ onUnmounted(() => stopWatch())
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-height: 438px;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  scrollbar-gutter: stable;
 }
 
 .review-item {
@@ -800,6 +828,8 @@ onUnmounted(() => stopWatch())
   border-radius: var(--radius);
   border: 1px solid var(--border);
   padding: 18px 20px;
+  min-height: 130px;
+  box-sizing: border-box;
 }
 
 .review-avatar {
@@ -808,6 +838,7 @@ onUnmounted(() => stopWatch())
 
 .review-body {
   flex: 1;
+  min-width: 0;
 }
 
 .review-header {
@@ -833,6 +864,8 @@ onUnmounted(() => stopWatch())
   font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.7;
+  margin: 0;
+  word-break: break-word;
 }
 
 .review-reply {
