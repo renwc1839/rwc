@@ -299,9 +299,21 @@
     <!-- 报修弹窗 -->
     <el-dialog v-model="showNewRepair" title="我要报修" width="420px">
       <el-form label-width="70px">
-        <el-form-item label="房源"><el-select style="width:100%" placeholder="选房源"><el-option v-for="b in bookings" :key="b.id" :label="'房源 #'+b.property_id" :value="b.property_id" /></el-select></el-form-item>
-        <el-form-item label="哪里坏了"><el-select style="width:100%" placeholder="选类型"><el-option label="💧 水电" value="utility" /><el-option label="🔌 家电" value="appliance" /><el-option label="🪟 门窗" value="door" /><el-option label="🧱 墙面地面" value="structure" /><el-option label="其他" value="other" /></el-select></el-form-item>
-        <el-form-item label="描述一下"><el-input type="textarea" :rows="3" placeholder="简单说说哪里出了问题..." /></el-form-item>
+        <el-form-item label="房源">
+          <el-select v-model="repairForm.property" style="width:100%" filterable allow-create placeholder="选房源">
+            <el-option v-for="b in bookings" :key="b.id" :label="'房源 #'+b.property_id" :value="'房源 #'+b.property_id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="哪里坏了">
+          <el-select v-model="repairForm.category" style="width:100%" placeholder="选类型">
+            <el-option label="水电" value="水电" />
+            <el-option label="家电" value="家电" />
+            <el-option label="门窗" value="门窗" />
+            <el-option label="墙面地面" value="墙面地面" />
+            <el-option label="其他" value="其他" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="描述一下"><el-input v-model="repairForm.desc" type="textarea" :rows="3" placeholder="简单说说哪里出了问题..." /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showNewRepair = false">算了</el-button><el-button type="primary" @click="submitRepair">提交</el-button></template>
     </el-dialog>
@@ -331,6 +343,7 @@ import { propertyService } from '@/services/property'
 import { storeToRefs } from 'pinia'
 import PropertyCard from '@/components/PropertyCard.vue'
 import { favoriteService } from '@/services/favorite'
+import { repairService, type Repair } from '@/services/repair'
 import type { Booking } from '@/types/booking'
 import type { Property } from '@/types/property'
 
@@ -349,7 +362,8 @@ const billTab = ref('unpaid')
 
 const bookings = ref<Booking[]>([])
 const favorites = ref<Property[]>([])
-const repairs = ref<any[]>([])
+const repairs = ref<Repair[]>([])
+const repairForm = ref({ property: '', category: '', desc: '' })
 const chats = ref([
   { id: 1, from: '张房东', time: '30分钟前', text: '明天下午2点可以看房，到了联系我', read: false },
   { id: 2, from: '李管家', time: '昨天', text: '房子还在的，随时欢迎来看', read: true },
@@ -413,6 +427,8 @@ async function fetchAll() {
       favorites.value = []
     }
   } catch { favorites.value = [] }
+  try { repairs.value = await repairService.list() }
+  catch { repairs.value = [] }
   pageLoading.value = false
 }
 async function cancelBooking(b: Booking) {
@@ -430,7 +446,22 @@ async function downloadContract(row: any) {
 }
 function openBookingDialog(p: Property) { router.push({ path: '/booking/confirm', query: { property_id: String(p.id) } }) }
 function viewRepair(row: any) { ElMessage.info(`工单 ${row.id}：${row.status}`) }
-function submitRepair() { ElMessage.success('报修已提交，房东会尽快处理'); showNewRepair.value = false }
+async function submitRepair() {
+  if (!repairForm.value.property || !repairForm.value.category || !repairForm.value.desc.trim()) {
+    ElMessage.error('请填写房源、类型和问题描述')
+    return
+  }
+  await repairService.create({
+    property: repairForm.value.property,
+    tenant: user.value?.username || '当前租客',
+    category: repairForm.value.category,
+    desc: repairForm.value.desc.trim(),
+  })
+  ElMessage.success('报修已提交，房东和管理员端会同步看到')
+  repairForm.value = { property: '', category: '', desc: '' }
+  showNewRepair.value = false
+  await fetchAll()
+}
 function bindWechat() { ElMessage.info('请用微信扫码绑定') }
 
 function maskPhone(p: string | null): string { return p && p.length >= 11 ? p.slice(0, 3) + '****' + p.slice(-4) : (p || '未设置') }

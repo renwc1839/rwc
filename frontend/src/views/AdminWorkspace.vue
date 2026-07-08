@@ -213,7 +213,7 @@
 
         <!-- Tab6: 维修工单 -->
         <el-tab-pane label="🔧 维修工单" name="repairs">
-          <el-table :data="mockRepairs" stripe>
+          <el-table :data="repairs" stripe>
             <el-table-column label="工单号" prop="id" width="100" />
             <el-table-column label="房源" prop="property" min-width="160" />
             <el-table-column label="报修租客" prop="tenant" width="100" />
@@ -341,9 +341,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 import { UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { repairService, type Repair } from '@/services/repair'
 
 // ── 管理员信息 ──
 const adminName = ref('张经理')
@@ -357,14 +358,17 @@ const showEditProfile = ref(false)
 const showUploadQualification = ref(false)
 
 // ── 统计卡片 ──
-const statsCards = [
+const repairs = ref<Repair[]>([])
+const pendingRepairCount = computed(() => repairs.value.filter((item) => item.status !== '已完成').length)
+
+const statsCards = computed(() => [
   { icon: '🏠', label: '管理房源', value: 48, sub: `空置12 · 已租32 · 待上架4`, tab: 'properties' },
   { icon: '📅', label: '待处理预约', value: 8, sub: `今日看房 3 人次`, tab: 'bookings' },
   { icon: '💰', label: '本月应收', value: '¥98,500', sub: `待确认定金5 · 逾期3户`, tab: 'finance' },
   { icon: '📄', label: '合同统计', value: 35, sub: `30天内到期 6 份`, tab: 'contracts' },
-  { icon: '🔧', label: '待处理工单', value: 4, sub: `报修2 · 投诉1 · 换房1`, tab: 'repairs' },
+  { icon: '🔧', label: '待处理工单', value: pendingRepairCount.value, sub: `报修 ${pendingRepairCount.value} 条`, tab: 'repairs' },
   { icon: '👁️', label: '今日访客', value: 156, sub: `咨询量 23 条`, tab: 'messages' },
-]
+])
 
 // ── Tab 状态 ──
 const activeTab = ref('properties')
@@ -437,12 +441,6 @@ const mockTenants = [
   { name: '张伟', phone: '136****8901', property: '朝阳区观湖国际', contractId: 'HT20260301003', rent: '¥15,000', payStatus: '逾期', endDate: '2026-08-31' },
 ]
 
-const mockRepairs = [
-  { id: 'WO001', property: '朝阳区阳光花园 3-1502', tenant: '刘先生', desc: '主卧空调不制冷，需维修', date: '2026-06-27', status: '待处理' },
-  { id: 'WO002', property: '海淀区融科A座', tenant: '李明', desc: '厨房水槽漏水', date: '2026-06-25', status: '已派单' },
-  { id: 'WO003', property: '西城区学区房', tenant: '王芳', desc: '热水器无法正常加热', date: '2026-06-22', status: '维修中' },
-]
-
 const mockMessages = [
   { id: 1, tenant: '刘先生', time: '10分钟前', text: '请问明天下午可以看房吗？我对朝阳区那套两居室很感兴趣。', read: false },
   { id: 2, tenant: '赵女士', time: '1小时前', text: '独栋别墅的定金我已经支付了，请查收。', read: false },
@@ -479,11 +477,25 @@ function viewTenantDetail(row: any) { ElMessage.info(`查看租客详情: ${row.
 function viewTenantPayments(row: any) { ElMessage.info(`查看缴费记录: ${row.name}`) }
 function viewTenantRepairs(row: any) { ElMessage.info(`查看报修历史: ${row.name}`) }
 
-function assignRepair(row: any) { ElMessage.success(`工单 ${row.id} 已派单`) }
-function completeRepair(row: any) { ElMessage.success(`工单 ${row.id} 已标记完成`) }
+async function fetchRepairs() {
+  try { repairs.value = await repairService.list() }
+  catch { repairs.value = [] }
+}
+async function assignRepair(row: Repair) {
+  await repairService.update(row.id, { status: '已派单', result: '房东已派单给维修组' })
+  ElMessage.success(`工单 ${row.id} 已派单`)
+  await fetchRepairs()
+}
+async function completeRepair(row: Repair) {
+  await repairService.update(row.id, { status: '已完成', result: '维修已完成' })
+  ElMessage.success(`工单 ${row.id} 已标记完成`)
+  await fetchRepairs()
+}
 function uploadRepairProof(row: any) { ElMessage.info(`上传维修凭证: ${row.id}`) }
 
 function replyMessage(m: any) { ElMessage.info(`回复 ${m.tenant} 的消息`) }
+
+onMounted(fetchRepairs)
 </script>
 
 <style scoped>

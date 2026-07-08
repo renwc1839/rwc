@@ -137,6 +137,52 @@ def seed_state() -> dict[str, Any]:
                 "status": "处理中",
                 "result": "",
             },
+            {
+                "id": "WO-5002",
+                "type": "维修报修",
+                "title": "厨房水槽漏水",
+                "owner": "维修组",
+                "related": "RP-5002",
+                "deadline": "48 小时内",
+                "priority": "重要",
+                "status": "已派单",
+                "result": "",
+            },
+        ],
+        "repairs": [
+            {
+                "id": "RP-5001",
+                "property": "朝阳区阳光花园 3-1502",
+                "tenant": "刘先生",
+                "category": "家电",
+                "desc": "主卧空调不制冷，需维修",
+                "date": "2026-06-27",
+                "status": "待处理",
+                "owner": "维修组",
+                "result": "",
+            },
+            {
+                "id": "RP-5002",
+                "property": "海淀区融科A座",
+                "tenant": "李明",
+                "category": "水电",
+                "desc": "厨房水槽漏水",
+                "date": "2026-06-25",
+                "status": "已派单",
+                "owner": "维修组",
+                "result": "",
+            },
+            {
+                "id": "RP-5003",
+                "property": "西城区学区房",
+                "tenant": "王芳",
+                "category": "家电",
+                "desc": "热水器无法正常加热",
+                "date": "2026-06-22",
+                "status": "维修中",
+                "owner": "维修组",
+                "result": "",
+            },
         ],
         "messages": [
             {
@@ -215,9 +261,14 @@ def load_state() -> dict[str, Any]:
     state = json.loads(DATA_FILE.read_text(encoding="utf-8"))
     defaults = seed_state()
     changed = False
-    for key in ("workOrders", "messages", "financeItems"):
+    for key in ("workOrders", "repairs", "messages", "financeItems"):
         if key not in state:
             state[key] = defaults[key]
+            changed = True
+    existing_repair_work_orders = {item.get("related") for item in state.get("workOrders", []) if item.get("type") == "维修报修"}
+    for repair in state.get("repairs", []):
+        if repair["id"] not in existing_repair_work_orders:
+            state.setdefault("workOrders", []).append(repair_to_work_order(repair))
             changed = True
     if "arbitrations" in state:
         state.pop("arbitrations", None)
@@ -263,6 +314,18 @@ class StatusUpdate(BaseModel):
 
 class AppointmentAssign(BaseModel):
     assignee: str = Field(min_length=1, max_length=80)
+
+
+class RepairCreate(BaseModel):
+    property: str = Field(min_length=1, max_length=160)
+    tenant: str = Field(min_length=1, max_length=80)
+    category: str = Field(min_length=1, max_length=40)
+    desc: str = Field(min_length=3, max_length=800)
+
+
+class RepairUpdate(BaseModel):
+    status: str
+    result: str | None = None
 
 
 @router.get("/public/options")
@@ -323,6 +386,79 @@ async def create_complaint(payload: ComplaintCreate) -> dict[str, Any]:
     append_log(state, "投诉提交", complaint_id, f"{payload.complainantName} 提交投诉：{payload.title}", operator="customer")
     save_state(state)
     return complaint
+
+
+def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": f"WO-{repair['id'].replace('RP-', '')}",
+        "type": "维修报修",
+        "title": repair["desc"],
+        "owner": repair.get("owner") or "维修组",
+        "related": repair["id"],
+        "deadline": "48 小时内",
+        "priority": "重要" if repair.get("category") in {"水电", "家电"} else "一般",
+        "status": repair["status"],
+        "result": repair.get("result", ""),
+    }
+
+
+@router.get("/repairs")
+async def list_repairs() -> list[dict[str, Any]]:
+    return load_state().get("repairs", [])
+
+
+@router.post("/repairs", status_code=status.HTTP_201_CREATED)
+async def create_repair(payload: RepairCreate) -> dict[str, Any]:
+    state = load_state()
+    repair_id = f"RP-{len(state.setdefault('repairs', [])) + 5001}"
+    repair = {
+        "id": repair_id,
+        "property": payload.property,
+        "tenant": payload.tenant,
+        "category": payload.category,
+        "desc": payload.desc,
+        "date": now()[:10],
+        "status": "待处理",
+        "owner": "维修组",
+        "result": "",
+    }
+    state["repairs"].insert(0, repair)
+    state.setdefault("workOrders", []).insert(0, repair_to_work_order(repair))
+    state.setdefault("messages", []).insert(
+        0,
+        {
+            "id": f"MSG-{len(state.get('messages', [])) + 7001}",
+            "channel": "报修",
+            "sender": payload.tenant,
+            "target": "维修组",
+            "summary": payload.desc,
+            "related": repair_id,
+            "createdAt": now(),
+            "status": "未读",
+        },
+    )
+    append_log(state, "报修提交", repair_id, f"{payload.tenant} 提交报修：{payload.desc}", operator="tenant")
+    save_state(state)
+    return repair
+
+
+@router.patch("/repairs/{repair_id}")
+async def update_repair(repair_id: str, payload: RepairUpdate) -> dict[str, Any]:
+    state = load_state()
+    for repair in state.get("repairs", []):
+        if repair["id"] == repair_id:
+            repair["status"] = payload.status
+            if payload.result is not None:
+                repair["result"] = payload.result
+            for work_order in state.get("workOrders", []):
+                if work_order.get("related") == repair_id:
+                    work_order["status"] = payload.status
+                    if payload.result is not None:
+                        work_order["result"] = payload.result
+            append_log(state, "维修工单更新", repair_id, f"状态更新为 {payload.status}；处理记录：{payload.result or '-'}")
+            save_state(state)
+            return repair
+    raise HTTPException(status_code=404, detail="Repair not found")
 
 
 @router.get("/overview")
@@ -428,6 +564,12 @@ async def update_item_status(
             item["status"] = payload.status
             if payload.result is not None:
                 item["result"] = payload.result
+            if collection == "workOrders" and item.get("type") == "维修报修":
+                for repair in state.get("repairs", []):
+                    if repair["id"] == item.get("related"):
+                        repair["status"] = payload.status
+                        if payload.result is not None:
+                            repair["result"] = payload.result
             append_log(state, "状态更新", item_id, f"{collection} 状态更新为 {payload.status}")
             save_state(state)
             return item
