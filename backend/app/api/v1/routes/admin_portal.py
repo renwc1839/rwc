@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -115,9 +114,75 @@ def seed_state() -> dict[str, Any]:
                 "result": "",
             }
         ],
-        "arbitrations": [
-            {"caseNo": "AR-1001", "type": "押金纠纷", "parties": "李同学 / UK Living", "amount": "£1,200", "evidence": "照片 8 张、合同 1 份", "status": "待仲裁", "result": ""},
-            {"caseNo": "PN-0039", "type": "违规处罚", "parties": "房东 NY Homes", "amount": "虚假房源", "evidence": "房源截图、核验记录", "status": "待处理", "result": ""},
+        "workOrders": [
+            {
+                "id": "WO-2101",
+                "type": "投诉核实",
+                "title": "核实 CP-0082 顾问迟到情况",
+                "owner": "客服组",
+                "related": "CP-0082",
+                "deadline": "今日 18:00",
+                "priority": "重要",
+                "status": "待处理",
+                "result": "",
+            },
+            {
+                "id": "WO-2102",
+                "type": "带看反馈",
+                "title": "补录 BK-10293 带看结果",
+                "owner": "Sofia",
+                "related": "BK-10293",
+                "deadline": "今日 20:00",
+                "priority": "一般",
+                "status": "处理中",
+                "result": "",
+            },
+        ],
+        "messages": [
+            {
+                "id": "MSG-7001",
+                "channel": "投诉",
+                "sender": "王同学",
+                "target": "客服组",
+                "summary": "带看顾问迟到且未提前说明",
+                "related": "CP-0082",
+                "createdAt": timestamp,
+                "status": "未读",
+            },
+            {
+                "id": "MSG-7002",
+                "channel": "预约",
+                "sender": "系统",
+                "target": "Anna",
+                "summary": "BK-10291 超过 2 小时未确认",
+                "related": "BK-10291",
+                "createdAt": timestamp,
+                "status": "未读",
+            },
+        ],
+        "financeItems": [
+            {
+                "id": "FIN-3301",
+                "type": "押金退款",
+                "customer": "李同学",
+                "property": "伦敦一区学生公寓 A-1208",
+                "amount": "£1,200",
+                "evidence": "退租确认单、房屋照片",
+                "owner": "财务组",
+                "status": "待审核",
+                "result": "",
+            },
+            {
+                "id": "FIN-3302",
+                "type": "费用扣款",
+                "customer": "王同学",
+                "property": "纽约曼哈顿 Studio",
+                "amount": "$80",
+                "evidence": "清洁费用凭证",
+                "owner": "财务组",
+                "status": "待处理",
+                "result": "",
+            },
         ],
         "warnings": [
             {"id": "W-001", "type": "业务异常", "content": "多伦多预约量较 7 日均值下降 38%", "level": "重要", "created": timestamp, "status": "待处理"},
@@ -147,7 +212,19 @@ def load_state() -> dict[str, Any]:
         state = seed_state()
         save_state(state)
         return state
-    return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    state = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    defaults = seed_state()
+    changed = False
+    for key in ("workOrders", "messages", "financeItems"):
+        if key not in state:
+            state[key] = defaults[key]
+            changed = True
+    if "arbitrations" in state:
+        state.pop("arbitrations", None)
+        changed = True
+    if changed:
+        save_state(state)
+    return state
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -188,15 +265,6 @@ class AppointmentAssign(BaseModel):
     assignee: str = Field(min_length=1, max_length=80)
 
 
-class RuleUpdate(BaseModel):
-    rules: dict[str, Any]
-
-
-class RuleChangeRequest(BaseModel):
-    scope: str = Field(min_length=1, max_length=80)
-    reason: str = Field(min_length=5, max_length=1000)
-
-
 @router.get("/public/options")
 async def get_public_options() -> dict[str, Any]:
     state = load_state()
@@ -225,16 +293,31 @@ async def create_complaint(payload: ComplaintCreate) -> dict[str, Any]:
         "result": "",
     }
     state["complaints"].insert(0, complaint)
-    state["arbitrations"].insert(
+    state.setdefault("workOrders", []).insert(
         0,
         {
-            "caseNo": complaint_id,
-            "type": "投诉处理",
-            "parties": f"{payload.complainantName} / 平台",
-            "amount": payload.category,
-            "evidence": payload.title,
+            "id": f"WO-{len(state.get('workOrders', [])) + 2101}",
+            "type": "投诉核实",
+            "title": payload.title,
+            "owner": "客服组",
+            "related": complaint_id,
+            "deadline": "24 小时内",
+            "priority": complaint["priority"],
             "status": "待处理",
             "result": "",
+        },
+    )
+    state.setdefault("messages", []).insert(
+        0,
+        {
+            "id": f"MSG-{len(state.get('messages', [])) + 7001}",
+            "channel": "投诉",
+            "sender": payload.complainantName,
+            "target": "客服组",
+            "summary": payload.title,
+            "related": complaint_id,
+            "createdAt": now(),
+            "status": "未读",
         },
     )
     append_log(state, "投诉提交", complaint_id, f"{payload.complainantName} 提交投诉：{payload.title}", operator="customer")
@@ -246,7 +329,8 @@ async def create_complaint(payload: ComplaintCreate) -> dict[str, Any]:
 async def get_overview(_: object = Depends(require_admin)) -> dict[str, Any]:
     state = load_state()
     pending_complaints = [c for c in state["complaints"] if c["status"] != "已完结"]
-    pending_arbitrations = [a for a in state["arbitrations"] if a["status"] in {"待仲裁", "待处理"}]
+    pending_work_orders = [w for w in state.get("workOrders", []) if w["status"] != "已完结"]
+    pending_finance = [f for f in state.get("financeItems", []) if f["status"] not in {"已退款", "已扣款", "已完结"}]
     urgent_warnings = [w for w in state["warnings"] if w["level"] == "紧急" and w["status"] != "已处理"]
     return {
         "metrics": [
@@ -254,7 +338,8 @@ async def get_overview(_: object = Depends(require_admin)) -> dict[str, Any]:
             {"label": "今日带看数", "value": 18, "hint": "示例统计", "danger": False},
             {"label": "今日签约数", "value": 7, "hint": "转化稳定", "danger": False},
             {"label": "待处理投诉", "value": len(pending_complaints), "hint": "来自投诉入口", "danger": True},
-            {"label": "待仲裁纠纷", "value": len(pending_arbitrations), "hint": "来自仲裁中心", "danger": True},
+            {"label": "待办工单", "value": len(pending_work_orders), "hint": "投诉、维修、带看反馈", "danger": True},
+            {"label": "押金财务待处理", "value": len(pending_finance), "hint": "退款、扣款、凭证记录", "danger": True},
             {"label": "紧急预警", "value": len(urgent_warnings), "hint": "来自预警中心", "danger": True},
         ],
         "cityRanks": [
@@ -293,10 +378,6 @@ async def update_complaint(
             complaint["status"] = payload.status
             if payload.result is not None:
                 complaint["result"] = payload.result
-            for arbitration in state["arbitrations"]:
-                if arbitration["caseNo"] == complaint_id:
-                    arbitration["status"] = payload.status
-                    arbitration["result"] = payload.result or arbitration.get("result", "")
             append_log(state, "投诉处理", complaint_id, f"状态更新为 {payload.status}；处理结果：{payload.result or '-'}")
             save_state(state)
             return complaint
@@ -327,7 +408,17 @@ async def update_item_status(
     payload: StatusUpdate,
     _: object = Depends(require_admin),
 ) -> dict[str, Any]:
-    allowed = {"properties": "id", "exceptions": "id", "arbitrations": "caseNo", "warnings": "id", "staff": "id", "accounts": "id"}
+    allowed = {
+        "properties": "id",
+        "appointments": "id",
+        "exceptions": "id",
+        "warnings": "id",
+        "staff": "id",
+        "accounts": "id",
+        "workOrders": "id",
+        "messages": "id",
+        "financeItems": "id",
+    }
     if collection not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported collection")
     state = load_state()
@@ -342,34 +433,3 @@ async def update_item_status(
             return item
     raise HTTPException(status_code=404, detail="Item not found")
 
-
-@router.put("/rules")
-async def update_rules(payload: RuleUpdate, _: object = Depends(require_admin)) -> dict[str, Any]:
-    state = load_state()
-    protected_penalty = deepcopy(state["rules"].get("penalty", seed_state()["rules"]["penalty"]))
-    next_rules = deepcopy(payload.rules)
-    next_rules["penalty"] = protected_penalty
-    state["rules"] = next_rules
-    append_log(state, "规则发布", "rules", "管理员发布了新的运营规则配置；处罚治理策略保持锁定")
-    save_state(state)
-    return state["rules"]
-
-
-@router.post("/rules/change-requests", status_code=status.HTTP_201_CREATED)
-async def create_rule_change_request(
-    payload: RuleChangeRequest,
-    _: object = Depends(require_admin),
-) -> dict[str, Any]:
-    state = load_state()
-    request_id = f"RC-{len(state.setdefault('ruleChangeRequests', [])) + 1001}"
-    item = {
-        "id": request_id,
-        "scope": payload.scope,
-        "reason": payload.reason,
-        "status": "待评审",
-        "createdAt": now(),
-    }
-    state["ruleChangeRequests"].insert(0, item)
-    append_log(state, "规则变更申请", request_id, f"{payload.scope}：{payload.reason}")
-    save_state(state)
-    return item

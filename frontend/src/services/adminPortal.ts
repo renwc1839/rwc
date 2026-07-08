@@ -6,7 +6,9 @@ export interface PortalState {
   staff: any[]
   exceptions: any[]
   complaints: any[]
-  arbitrations: any[]
+  workOrders: any[]
+  messages: any[]
+  financeItems: any[]
   warnings: any[]
   rules: Record<string, any>
   accounts: any[]
@@ -59,11 +61,4 @@ export const adminPortalService = {
     return api.patch(`/admin-portal/items/${collection}/${id}`, data).then((r) => r.data)
   },
 
-  updateRules(rules: Record<string, any>): Promise<Record<string, any>> {
-    return api.put('/admin-portal/rules', { rules }).then((r) => r.data)
-  },
-
-  createRuleChangeRequest(data: { scope: string; reason: string }): Promise<any> {
-    return api.post('/admin-portal/rules/change-requests', data).then((r) => r.data)
-  },
 }

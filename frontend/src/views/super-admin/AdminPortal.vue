@@ -18,22 +18,22 @@
       </el-menu>
 
       <div class="security-panel">
-        <span>安全会话</span>
-        <strong>账号密码 + 二次验证</strong>
-        <p>敏感操作统一写入不可删除日志</p>
+        <span>权限与审计</span>
+        <strong>敏感数据二次验证</strong>
+        <p>处理动作统一写入不可删除操作日志</p>
       </div>
     </aside>
 
     <main class="portal-main">
       <header class="portal-header">
         <div>
-          <p class="eyebrow">境外租房平台</p>
+          <p class="eyebrow">境外租房平台运营管理</p>
           <h2>{{ currentModule?.label }}</h2>
         </div>
         <div class="header-actions">
-          <el-input v-model="globalKeyword" :prefix-icon="Search" placeholder="搜索订单、房源、投诉、人员" clearable />
+          <el-input v-model="globalKeyword" :prefix-icon="Search" placeholder="搜索预约、房源、投诉、工单、人员" clearable />
           <el-button :icon="Refresh" :loading="loading" @click="loadPortalData">刷新</el-button>
-          <el-button type="primary" @click="openFrontendComplaint">打开前台投诉入口</el-button>
+          <el-button type="primary" @click="openFrontendComplaint">前台投诉入口</el-button>
         </div>
       </header>
 
@@ -44,137 +44,15 @@
       </section>
 
       <section class="content-shell" v-loading="loading">
-        <template v-if="activeModule === 'dispatch'">
-          <div v-if="activeTab === 'booking-dispatch'" class="panel">
-            <PanelTitle title="预约调度" desc="查看预约订单，并执行分配、改期、取消、优先级标记。" />
-            <div class="toolbar-actions">
-              <el-select v-model="filters.city" placeholder="城市" clearable>
-                <el-option v-for="city in cities" :key="city" :label="city" :value="city" />
-              </el-select>
-              <el-button type="primary" :icon="UserFilled" @click="bulkAssign">批量分配</el-button>
-            </div>
-            <el-table :data="filteredAppointments" border stripe>
-              <el-table-column prop="id" label="编号" width="110" sortable />
-              <el-table-column prop="customer" label="客户姓名" width="110" />
-              <el-table-column prop="phone" label="联系方式" width="130" />
-              <el-table-column prop="property" label="意向房源" min-width="190" />
-              <el-table-column prop="time" label="预约时间" min-width="150" sortable />
-              <el-table-column prop="city" label="城市" width="90" />
-              <el-table-column prop="assignee" label="对接人" width="100" />
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="操作" fixed="right" width="220">
-                <template #default="{ row }">
-                  <el-button size="small" @click="assignAppointment(row)">分配</el-button>
-                  <el-button size="small" type="warning" @click="recordAction(row.id, '已标记优先级')">优先级</el-button>
-                  <el-button size="small" type="danger" @click="recordAction(row.id, '已取消预约')">取消</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <div v-else-if="activeTab === 'property-dispatch'" class="panel">
-            <PanelTitle title="房源调度" desc="管理房源可租、锁定、签约、下架状态，并处理冲突。" />
-            <div class="status-grid">
-              <div v-for="item in propertyStatusCards" :key="item.label" class="stat-card">
-                <span>{{ item.label }}</span>
-                <strong>{{ item.value }}</strong>
-              </div>
-            </div>
-            <el-table :data="properties" border stripe>
-              <el-table-column prop="title" label="房源" min-width="200" />
-              <el-table-column prop="city" label="城市" width="90" />
-              <el-table-column prop="landlord" label="房东" width="120" />
-              <el-table-column prop="lockedUntil" label="锁定到期" min-width="140" />
-              <el-table-column prop="conflicts" label="冲突" width="80" />
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="操作" fixed="right" width="230">
-                <template #default="{ row }">
-                  <el-button size="small" @click="updateItem('properties', row.id, '已预约')">锁定</el-button>
-                  <el-button size="small" @click="updateItem('properties', row.id, '可租')">解锁</el-button>
-                  <el-button size="small" type="danger" @click="updateItem('properties', row.id, '已下架')">下架</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <div v-else-if="activeTab === 'staff-dispatch'" class="panel">
-            <PanelTitle title="人员调度" desc="查看人员排班、在岗状态、当前负载和跨城支援。" />
-            <el-table :data="staff" border stripe>
-              <el-table-column prop="name" label="姓名" width="100" />
-              <el-table-column prop="city" label="负责城市" width="110" />
-              <el-table-column prop="workTime" label="排班" width="140" />
-              <el-table-column label="负载" min-width="160">
-                <template #default="{ row }"><el-progress :percentage="row.load" :status="row.load >= 80 ? 'exception' : undefined" /></template>
-              </el-table-column>
-              <el-table-column prop="pending" label="待处理" width="90" />
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }"><el-tag :type="row.online ? 'success' : 'info'">{{ row.status }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="操作" fixed="right" width="220">
-                <template #default="{ row }">
-                  <el-button size="small" @click="updateItem('staff', row.id, '在岗')">设为在岗</el-button>
-                  <el-button size="small" @click="updateItem('staff', row.id, '跨城支援')">跨城支援</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <div v-else class="panel">
-            <PanelTitle title="异常督办" desc="集中处理超时未确认、带看后未反馈、签约超时和投诉未处理。" />
-            <el-table :data="exceptions" border stripe>
-              <el-table-column prop="type" label="异常类型" min-width="150" />
-              <el-table-column prop="target" label="关联对象" min-width="160" />
-              <el-table-column prop="owner" label="负责人" width="100" />
-              <el-table-column prop="elapsed" label="超时" width="100" />
-              <el-table-column label="级别" width="90">
-                <template #default="{ row }"><el-tag :type="warningType(row.level)">{{ row.level }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="操作" fixed="right" width="220">
-                <template #default="{ row }">
-                  <el-button size="small" @click="recordAction(row.id, `已催办 ${row.owner}`)">催办</el-button>
-                  <el-button size="small" @click="updateItem('exceptions', row.id, '已转派')">转派</el-button>
-                  <el-button size="small" type="warning" @click="updateItem('exceptions', row.id, '管理员介入')">介入</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </template>
-
-        <template v-else-if="activeModule === 'arbitration'">
-          <div class="panel">
-            <PanelTitle :title="selectedTab?.label || ''" :desc="selectedTab?.desc || ''" />
-            <el-table :data="caseRows" border stripe>
-              <el-table-column prop="caseNo" label="编号" width="110" sortable />
-              <el-table-column prop="type" label="类型" width="120" />
-              <el-table-column prop="parties" label="双方/对象" min-width="160" />
-              <el-table-column prop="amount" label="金额/影响" width="130" />
-              <el-table-column prop="evidence" label="材料摘要" min-width="210" />
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="操作" fixed="right" width="250">
-                <template #default="{ row }">
-                  <el-button size="small" @click="showEvidence(row)">查看</el-button>
-                  <el-button size="small" type="primary" @click="openDecisionDialog(row)">处理</el-button>
-                  <el-button size="small" type="danger" @click="rejectCase(row)">驳回</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </template>
-
-        <template v-else-if="activeModule === 'dashboard'">
+        <template v-if="activeModule === 'dashboard'">
           <div v-if="activeTab === 'realtime-dashboard'" class="panel">
+            <PanelTitle title="实时大盘" desc="登录后先看今日预约、工单、投诉、财务和预警，不做规则编辑。" />
             <div class="metric-grid">
-              <div v-for="metric in metrics" :key="metric.label" class="metric-card">
+              <button v-for="metric in metrics" :key="metric.label" class="metric-card" :class="{ danger: metric.danger }" @click="jumpFromMetric(metric.label)">
                 <span>{{ metric.label }}</span>
-                <strong :class="{ danger: metric.danger }">{{ metric.value }}</strong>
+                <strong>{{ metric.value }}</strong>
                 <p>{{ metric.hint }}</p>
-              </div>
+              </button>
             </div>
             <div class="dashboard-grid">
               <div class="panel-block">
@@ -198,8 +76,12 @@
             </div>
           </div>
 
-          <div v-else-if="activeTab === 'business-analysis'" class="panel">
-            <PanelTitle title="业务分析" desc="按城市、时间、房源和转化漏斗分析整体经营情况。" />
+          <div v-else class="panel">
+            <PanelTitle title="数据报表" desc="从真实预约、投诉、签约、人员负载和房源状态做运营统计。" />
+            <div class="toolbar-actions">
+              <el-button @click="recordAction('report', '已生成当前筛选报表')">生成报表</el-button>
+              <el-button type="primary" @click="recordAction('report', '已提交导出审批')">申请导出</el-button>
+            </div>
             <el-table :data="businessRows" border stripe>
               <el-table-column prop="city" label="城市" />
               <el-table-column prop="properties" label="房源量" />
@@ -211,166 +93,289 @@
               <div v-for="step in funnelRows" :key="step.label" :style="{ width: `${step.width}%` }">{{ step.label }} {{ step.value }}</div>
             </div>
           </div>
+        </template>
 
-          <div v-else-if="activeTab === 'staff-performance'" class="panel">
-            <PanelTitle title="人员绩效" desc="查看每位对接人的带看、签约、响应和投诉表现。" />
-            <el-table :data="performanceRows" border stripe>
-              <el-table-column prop="name" label="人员" />
-              <el-table-column prop="city" label="城市" />
-              <el-table-column prop="visits" label="带看次数" />
-              <el-table-column prop="contracts" label="签约数" />
-              <el-table-column prop="rate" label="签约率" />
-              <el-table-column prop="response" label="平均响应" />
-              <el-table-column prop="complaints" label="投诉次数" />
-              <el-table-column prop="score" label="满意度" />
-            </el-table>
+        <template v-else-if="activeModule === 'calendar'">
+          <div v-if="activeTab === 'calendar-view'" class="panel">
+            <PanelTitle title="统一日历 / 预约日历" desc="用日历视图把预约、带看、锁定冲突放在同一张运营视图里。" />
+            <div class="calendar-board">
+              <div v-for="day in calendarDays" :key="day.date" class="day-cell">
+                <span>{{ day.week }}</span>
+                <strong>{{ day.date }}</strong>
+                <p>{{ day.count }} 个事项</p>
+                <em v-for="event in day.events" :key="event">{{ event }}</em>
+              </div>
+            </div>
           </div>
 
           <div v-else class="panel">
-            <PanelTitle title="预警中心" desc="业务、人员和房源异常预警集中处理。" />
-            <el-table :data="warnings" border stripe>
-              <el-table-column prop="type" label="类型" width="120" />
-              <el-table-column prop="content" label="预警内容" min-width="260" />
-              <el-table-column label="级别" width="90">
-                <template #default="{ row }"><el-tag :type="warningType(row.level)">{{ row.level }}</el-tag></template>
+            <PanelTitle title="预约调度" desc="分配对接人、推进待确认/带看中/签约/取消状态，形成可追踪流转。" />
+            <div class="toolbar-actions">
+              <el-select v-model="filters.city" placeholder="城市" clearable>
+                <el-option v-for="city in cities" :key="city" :label="city" :value="city" />
+              </el-select>
+              <el-button type="primary" :icon="UserFilled" @click="bulkAssign">分配最早待办</el-button>
+            </div>
+            <el-table :data="filteredAppointments" border stripe>
+              <el-table-column prop="id" label="编号" width="110" sortable />
+              <el-table-column prop="customer" label="客户" width="110" />
+              <el-table-column prop="phone" label="联系方式" width="130" />
+              <el-table-column prop="property" label="意向房源" min-width="210" />
+              <el-table-column prop="time" label="预约时间" min-width="150" sortable />
+              <el-table-column prop="city" label="城市" width="90" />
+              <el-table-column prop="assignee" label="对接人" width="100" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
               </el-table-column>
-              <el-table-column prop="created" label="触发时间" min-width="150" />
-              <el-table-column label="操作" width="150">
-                <template #default="{ row }"><el-button size="small" @click="updateItem('warnings', row.id, '已处理')">标记已处理</el-button></template>
+              <el-table-column label="操作" fixed="right" width="300">
+                <template #default="{ row }">
+                  <el-button size="small" @click="assignAppointment(row)">分配</el-button>
+                  <el-button size="small" @click="updateItem('appointments', row.id, '带看中')">带看中</el-button>
+                  <el-button size="small" type="success" @click="updateItem('appointments', row.id, '已签约')">签约</el-button>
+                  <el-button size="small" type="danger" @click="updateItem('appointments', row.id, '已取消')">取消</el-button>
+                </template>
               </el-table-column>
             </el-table>
           </div>
         </template>
 
-        <template v-else-if="activeModule === 'rules'">
-          <div class="panel">
-            <div class="panel-toolbar">
-              <div>
-                <h3>{{ selectedTab?.label }}</h3>
-                <p>{{ selectedTab?.desc }}</p>
-              </div>
-              <el-button type="primary" @click="activeTab === 'penalty-rules' ? requestPenaltyRuleChange() : publishRules()">
-                {{ activeTab === 'penalty-rules' ? '发起变更申请' : '发布规则' }}
-              </el-button>
-            </div>
-
-            <el-form label-width="160px" class="rules-form">
-              <template v-if="activeTab === 'booking-rules'">
-                <el-form-item label="最少提前预约时间"><el-input-number v-model="rulesState.booking.advanceHours" :min="1" /> 小时</el-form-item>
-                <el-form-item label="同时预约上限"><el-input-number v-model="rulesState.booking.maxActive" :min="1" /> 套</el-form-item>
-                <el-form-item label="房源锁定时长"><el-input-number v-model="rulesState.booking.lockHours" :min="1" /> 小时</el-form-item>
-                <el-form-item label="取消预约扣费"><el-switch v-model="rulesState.booking.cancelFee" /></el-form-item>
-              </template>
-
-              <template v-else-if="activeTab === 'deposit-rules'">
-                <el-form-item label="押金比例"><el-select v-model="rulesState.deposit.ratio"><el-option label="押一付一" value="押一付一" /><el-option label="押二付一" value="押二付一" /></el-select></el-form-item>
-                <el-form-item label="退款到账时间"><el-input-number v-model="rulesState.deposit.refundDays" :min="1" /> 个工作日</el-form-item>
-                <el-form-item label="可扣款项目"><el-select v-model="rulesState.deposit.deductions" multiple filterable allow-create><el-option label="清洁费" value="清洁费" /><el-option label="维修费" value="维修费" /><el-option label="违约金" value="违约金" /></el-select></el-form-item>
-              </template>
-
-              <template v-else-if="activeTab === 'ai-rules'">
-                <el-form-item v-for="item in aiWeightRows" :key="item.key" :label="item.label">
-                  <el-slider v-model="rulesState.ai[item.key]" :min="0" :max="100" />
-                </el-form-item>
-                <el-form-item label="推荐结果数量"><el-input-number v-model="rulesState.ai.resultCount" :min="1" /></el-form-item>
-              </template>
-
-              <template v-else-if="activeTab === 'penalty-rules'">
-                <div class="policy-grid">
-                  <div class="policy-card">
-                    <span>客户放鸽子处罚</span>
-                    <strong>平台治理基线</strong>
-                    <p>{{ rulesState.penalty.tenantNoShow }}</p>
-                  </div>
-                  <div class="policy-card">
-                    <span>房东虚假房源处罚</span>
-                    <strong>平台治理基线</strong>
-                    <p>{{ rulesState.penalty.fakeProperty }}</p>
-                  </div>
-                  <div class="policy-card">
-                    <span>投诉预警触发</span>
-                    <strong>{{ rulesState.penalty.complaintLimit }} 次</strong>
-                    <p>只作为系统预警阈值展示，不在此页直接调整。</p>
-                  </div>
-                </div>
-                <div class="policy-lock">
-                  <el-tag type="danger" effect="dark">底层逻辑锁定</el-tag>
-                  <p>处罚规则会影响扣费、封号、下架和合作终止，不能由运营人员在页面中直接修改。需要先提交变更理由，再进入规则评审和版本发布流程。</p>
-                </div>
-              </template>
-
-              <template v-else>
-                <el-form-item label="通知场景"><el-input v-model="rulesState.notification.scene" /></el-form-item>
-                <el-form-item label="通知方式"><el-select v-model="rulesState.notification.channels" multiple><el-option label="短信" value="短信" /><el-option label="邮件" value="邮件" /><el-option label="站内信" value="站内信" /><el-option label="微信通知" value="微信通知" /></el-select></el-form-item>
-                <el-form-item label="通知对象"><el-select v-model="rulesState.notification.targets" multiple><el-option label="客户" value="客户" /><el-option label="房东" value="房东" /><el-option label="对接人" value="对接人" /><el-option label="管理员" value="管理员" /></el-select></el-form-item>
-                <el-form-item label="模板内容"><el-input v-model="rulesState.notification.template" type="textarea" :rows="4" /></el-form-item>
-              </template>
-            </el-form>
-          </div>
-        </template>
-
-        <template v-else>
-          <div v-if="activeTab === 'accounts-permissions'" class="panel">
-            <PanelTitle title="账号权限" desc="管理后台子账号、角色和启停状态。" />
-            <el-table :data="accounts" border stripe>
-              <el-table-column prop="name" label="账号" />
-              <el-table-column prop="role" label="角色" />
-              <el-table-column prop="phone" label="手机号" />
-              <el-table-column label="二次验证"><template #default="{ row }"><el-tag :type="row.twoFactor ? 'success' : 'warning'">{{ row.twoFactor ? '已启用' : '未启用' }}</el-tag></template></el-table-column>
-              <el-table-column label="状态"><template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="180">
+        <template v-else-if="activeModule === 'workorders'">
+          <div v-if="activeTab === 'task-flow'" class="panel">
+            <PanelTitle title="工单 / 任务管理" desc="投诉、维修、带看反馈都进入工单流，能指派、处理、结案。" />
+            <el-table :data="filteredWorkOrders" border stripe>
+              <el-table-column prop="id" label="工单号" width="120" sortable />
+              <el-table-column prop="type" label="类型" width="120" />
+              <el-table-column prop="title" label="任务内容" min-width="240" />
+              <el-table-column prop="owner" label="负责人" width="110" />
+              <el-table-column prop="related" label="关联对象" width="120" />
+              <el-table-column prop="deadline" label="截止时间" width="120" />
+              <el-table-column label="优先级" width="90">
+                <template #default="{ row }"><el-tag :type="warningType(row.priority)">{{ row.priority }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" width="230">
                 <template #default="{ row }">
-                  <el-button size="small" @click="updateItem('accounts', row.id, row.status === '启用' ? '禁用' : '启用')">{{ row.status === '启用' ? '禁用' : '启用' }}</el-button>
+                  <el-button size="small" @click="openProcess(row, 'workOrders', '处理工单')">处理</el-button>
+                  <el-button size="small" type="success" @click="updateItem('workOrders', row.id, '已完结')">结案</el-button>
                 </template>
               </el-table-column>
             </el-table>
           </div>
 
-          <div v-else-if="activeTab === 'operation-logs'" class="panel">
-            <PanelTitle title="操作日志" desc="所有后台操作完整记录，只可查看不可删除。" />
-            <el-table :data="logs" border stripe>
-              <el-table-column prop="operator" label="操作人" width="110" />
-              <el-table-column prop="time" label="操作时间" min-width="170" />
-              <el-table-column prop="type" label="类型" width="120" />
-              <el-table-column prop="target" label="对象" width="130" />
-              <el-table-column prop="content" label="内容" min-width="260" />
-              <el-table-column prop="ip" label="IP 地址" width="120" />
+          <div v-else class="panel">
+            <PanelTitle title="异常督办" desc="今日待办、超时提醒和管理员介入集中在这里，不再散落各处。" />
+            <el-table :data="filteredExceptions" border stripe>
+              <el-table-column prop="type" label="异常类型" min-width="150" />
+              <el-table-column prop="target" label="关联对象" min-width="180" />
+              <el-table-column prop="owner" label="负责人" width="100" />
+              <el-table-column prop="elapsed" label="超时" width="100" />
+              <el-table-column label="级别" width="90">
+                <template #default="{ row }"><el-tag :type="warningType(row.level)">{{ row.level }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" width="250">
+                <template #default="{ row }">
+                  <el-button size="small" @click="recordAction(row.id, `已催办 ${row.owner}`)">催办</el-button>
+                  <el-button size="small" @click="updateItem('exceptions', row.id, '已转派')">转派</el-button>
+                  <el-button size="small" type="warning" @click="updateItem('exceptions', row.id, '管理员介入')">介入</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="activeModule === 'messages'">
+          <div class="panel">
+            <PanelTitle title="统一消息中心" desc="投诉、预约、对接人反馈集中记录，后续可以扩展短信/站内信/邮件。" />
+            <el-table :data="filteredMessages" border stripe>
+              <el-table-column prop="id" label="消息号" width="120" />
+              <el-table-column prop="channel" label="来源" width="100" />
+              <el-table-column prop="sender" label="发送人" width="110" />
+              <el-table-column prop="target" label="接收人" width="110" />
+              <el-table-column prop="summary" label="内容摘要" min-width="260" />
+              <el-table-column prop="related" label="关联对象" width="120" />
+              <el-table-column prop="createdAt" label="时间" min-width="170" />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" width="150">
+                <template #default="{ row }"><el-button size="small" @click="updateItem('messages', row.id, '已读')">标记已读</el-button></template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="activeModule === 'properties'">
+          <div class="panel">
+            <PanelTitle title="房源状态管理" desc="房源按可租、锁定、带看中、签约、下架完整流转，冲突可见。" />
+            <div class="status-grid">
+              <div v-for="item in propertyStatusCards" :key="item.label" class="stat-card">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
+            <el-table :data="filteredProperties" border stripe>
+              <el-table-column prop="title" label="房源" min-width="220" />
+              <el-table-column prop="city" label="城市" width="90" />
+              <el-table-column prop="landlord" label="房东" width="120" />
+              <el-table-column prop="lockedUntil" label="锁定到期" min-width="140" />
+              <el-table-column prop="conflicts" label="冲突" width="80" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" width="320">
+                <template #default="{ row }">
+                  <el-button size="small" @click="updateItem('properties', row.id, '可租')">可租</el-button>
+                  <el-button size="small" @click="updateItem('properties', row.id, '已预约')">锁定</el-button>
+                  <el-button size="small" @click="updateItem('properties', row.id, '带看中')">带看中</el-button>
+                  <el-button size="small" type="success" @click="updateItem('properties', row.id, '已签约')">签约</el-button>
+                  <el-button size="small" type="danger" @click="updateItem('properties', row.id, '已下架')">下架</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="activeModule === 'staff'">
+          <div class="panel">
+            <PanelTitle title="人员负载 / 排班" desc="把当前负载、今日待办、超时提醒和跨城支援放在同一张人员表。" />
+            <el-table :data="filteredStaff" border stripe>
+              <el-table-column prop="name" label="姓名" width="100" />
+              <el-table-column prop="city" label="负责城市" width="110" />
+              <el-table-column prop="workTime" label="排班" width="140" />
+              <el-table-column label="负载" min-width="180">
+                <template #default="{ row }"><el-progress :percentage="Number(row.load || 0)" :status="Number(row.load || 0) >= 80 ? 'exception' : undefined" /></template>
+              </el-table-column>
+              <el-table-column prop="pending" label="今日待办" width="100" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" width="250">
+                <template #default="{ row }">
+                  <el-button size="small" @click="updateItem('staff', row.id, '在岗')">在岗</el-button>
+                  <el-button size="small" @click="updateItem('staff', row.id, '跨城支援')">跨城支援</el-button>
+                  <el-button size="small" type="warning" @click="updateItem('staff', row.id, '休息')">休息</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="activeModule === 'complaints'">
+          <div class="panel">
+            <PanelTitle title="投诉闭环" desc="只做投诉提交、指派核实、处理记录、结案结果和举证材料入口，不再定义为仲裁。" />
+            <div class="toolbar-actions">
+              <el-button type="primary" @click="openFrontendComplaint">打开前台提交页</el-button>
+            </div>
+            <el-table :data="filteredComplaints" border stripe>
+              <el-table-column prop="id" label="投诉号" width="120" sortable />
+              <el-table-column prop="category" label="分类" width="110" />
+              <el-table-column prop="title" label="投诉内容" min-width="230" />
+              <el-table-column prop="complainantName" label="提交人" width="110" />
+              <el-table-column prop="contact" label="联系方式" width="130" />
+              <el-table-column prop="city" label="城市" width="90" />
+              <el-table-column prop="property" label="关联房源" min-width="180" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" width="250">
+                <template #default="{ row }">
+                  <el-button size="small" @click="openProcess(row, 'complaints', '处理投诉')">处理</el-button>
+                  <el-button size="small" type="success" @click="finishComplaint(row)">结案</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="activeModule === 'finance'">
+          <div class="panel">
+            <PanelTitle title="押金 / 财务" desc="先做押金金额、退款/扣款处理和凭证记录，不做争议裁定结论。" />
+            <el-table :data="filteredFinanceItems" border stripe>
+              <el-table-column prop="id" label="单号" width="120" />
+              <el-table-column prop="type" label="类型" width="110" />
+              <el-table-column prop="customer" label="客户" width="110" />
+              <el-table-column prop="property" label="房源" min-width="220" />
+              <el-table-column prop="amount" label="金额" width="110" />
+              <el-table-column prop="evidence" label="凭证材料" min-width="220" />
+              <el-table-column prop="owner" label="负责人" width="110" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" width="260">
+                <template #default="{ row }">
+                  <el-button size="small" @click="openProcess(row, 'financeItems', '处理财务单')">处理</el-button>
+                  <el-button size="small" type="success" @click="updateItem('financeItems', row.id, row.type === '押金退款' ? '已退款' : '已扣款')">
+                    {{ row.type === '押金退款' ? '退款完成' : '扣款完成' }}
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else>
+          <div v-if="activeTab === 'accounts-permissions'" class="panel">
+            <PanelTitle title="账号权限" desc="按按钮权限、角色、账号启停管理后台入口；超级管理员不可删除。" />
+            <el-table :data="filteredAccounts" border stripe>
+              <el-table-column prop="name" label="账号" />
+              <el-table-column prop="role" label="角色" />
+              <el-table-column prop="phone" label="手机号" />
+              <el-table-column label="二次验证">
+                <template #default="{ row }"><el-tag :type="row.twoFactor ? 'success' : 'warning'">{{ row.twoFactor ? '已启用' : '未启用' }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="状态">
+                <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" width="180">
+                <template #default="{ row }">
+                  <el-button size="small" @click="updateItem('accounts', row.id, row.status === '启用' ? '禁用' : '启用')">
+                    {{ row.status === '启用' ? '禁用' : '启用' }}
+                  </el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </div>
 
           <div v-else class="panel">
-            <PanelTitle title="基础设置" desc="配置平台名称、客服联系方式、开通城市和第三方服务入口。" />
-            <el-form label-width="130px" class="rules-form">
-              <el-form-item label="平台名称"><el-input v-model="settings.platformName" /></el-form-item>
-              <el-form-item label="客服电话"><el-input v-model="settings.servicePhone" /></el-form-item>
-              <el-form-item label="开通城市"><el-select v-model="settings.cities" multiple filterable allow-create><el-option v-for="city in cities" :key="city" :label="city" :value="city" /></el-select></el-form-item>
-              <el-form-item><el-button type="primary" @click="recordAction('settings', '基础设置已保存')">保存设置</el-button></el-form-item>
-            </el-form>
+            <PanelTitle title="操作日志" desc="所有后台操作只可查看，不提供删除和修改入口。" />
+            <el-table :data="filteredLogs" border stripe>
+              <el-table-column prop="operator" label="操作人" width="110" />
+              <el-table-column prop="time" label="操作时间" min-width="170" />
+              <el-table-column prop="type" label="类型" width="130" />
+              <el-table-column prop="target" label="对象" width="130" />
+              <el-table-column prop="content" label="内容" min-width="280" />
+              <el-table-column prop="ip" label="IP 地址" width="120" />
+            </el-table>
           </div>
         </template>
       </section>
     </main>
 
-    <el-dialog v-model="decisionDialogVisible" title="处理记录" width="520px">
+    <el-dialog v-model="processDialogVisible" :title="processDialogTitle" width="560px">
       <el-form label-position="top">
         <el-form-item label="处理对象">
-          <el-input :model-value="activeCase?.caseNo || ''" disabled />
+          <el-input :model-value="activeRecord?.id || activeRecord?.related || ''" disabled />
         </el-form-item>
-        <el-form-item label="处理结果">
-          <el-select v-model="decisionForm.status">
-            <el-option label="处理中" value="处理中" />
-            <el-option label="已完结" value="已完结" />
-            <el-option label="已仲裁" value="已仲裁" />
-            <el-option label="已驳回" value="已驳回" />
+        <el-form-item label="当前内容">
+          <el-input :model-value="activeRecord?.title || activeRecord?.summary || activeRecord?.evidence || ''" disabled />
+        </el-form-item>
+        <el-form-item label="处理状态">
+          <el-select v-model="processForm.status">
+            <el-option v-for="option in processStatusOptions" :key="option" :label="option" :value="option" />
           </el-select>
         </el-form-item>
-        <el-form-item label="处理说明">
-          <el-input v-model="decisionForm.result" type="textarea" :rows="4" placeholder="填写处理依据、赔偿/处罚/驳回原因" />
+        <el-form-item label="处理记录">
+          <el-input v-model="processForm.result" type="textarea" :rows="4" placeholder="填写指派核实人、处理过程、凭证说明或结案结果" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="decisionDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitDecision">提交并留痕</el-button>
+        <el-button @click="processDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitProcess">提交并留痕</el-button>
       </template>
     </el-dialog>
   </div>
@@ -381,14 +386,16 @@ import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Bell,
+  Calendar,
+  ChatDotRound,
   DataAnalysis,
-  Finished,
-  Operation,
+  House,
+  Lock,
   Refresh,
   Search,
   Tickets,
   UserFilled,
+  Wallet,
 } from '@element-plus/icons-vue'
 import { adminPortalService, type PortalState } from '@/services/adminPortal'
 
@@ -408,54 +415,54 @@ const activeModule = ref('dashboard')
 const activeTab = ref('realtime-dashboard')
 const globalKeyword = ref('')
 const filters = reactive({ city: '' })
-const decisionDialogVisible = ref(false)
-const activeCase = ref<any | null>(null)
-const decisionForm = reactive({ status: '处理中', result: '' })
+const processDialogVisible = ref(false)
+const processDialogTitle = ref('处理记录')
+const activeRecord = ref<any | null>(null)
+const activeCollection = ref('')
+const processForm = reactive({ status: '处理中', result: '' })
 
 const modules = [
-  {
-    key: 'dispatch',
-    label: '调度中心',
-    icon: Operation,
-    badge: 12,
-    tabs: [
-      { key: 'booking-dispatch', label: '预约调度', desc: '查看所有预约单，进行分配、改期、取消等调度操作。' },
-      { key: 'property-dispatch', label: '房源调度', desc: '管理房源可租、锁定、签约、下架状态。' },
-      { key: 'staff-dispatch', label: '人员调度', desc: '管理当地对接人员排班与负载。' },
-      { key: 'exception-supervision', label: '异常督办', desc: '自动识别异常订单并集中督办。' },
-    ],
-  },
-  {
-    key: 'arbitration',
-    label: '仲裁中心',
-    icon: Finished,
-    badge: 7,
-    tabs: [
-      { key: 'deposit-disputes', label: '押金纠纷', desc: '处理押金退款、扣款相关纠纷。' },
-      { key: 'complaints', label: '投诉处理', desc: '处理客户和房东的各类投诉。' },
-      { key: 'penalties', label: '违规处罚', desc: '对违规客户、房东、内部人员进行处罚。' },
-      { key: 'special-approvals', label: '特例审批', desc: '处理特殊退款、破例预约、费用减免申请。' },
-    ],
-  },
   {
     key: 'dashboard',
     label: '数据看板',
     icon: DataAnalysis,
     tabs: [
-      { key: 'realtime-dashboard', label: '实时大盘', desc: '今日核心数据一览。' },
-      { key: 'business-analysis', label: '业务分析', desc: '多维度业务数据分析。' },
-      { key: 'staff-performance', label: '人员绩效', desc: '各对接人员绩效数据。' },
-      { key: 'warning-center', label: '预警中心', desc: '异常数据自动预警。' },
+      { key: 'realtime-dashboard', label: '实时大盘' },
+      { key: 'reports', label: '报表统计' },
     ],
   },
   {
-    key: 'system',
-    label: '系统管理',
-    icon: Tickets,
+    key: 'calendar',
+    label: '运营日历',
+    icon: Calendar,
+    badge: 3,
     tabs: [
-      { key: 'accounts-permissions', label: '账号权限', desc: '管理子账号、角色和权限。' },
-      { key: 'operation-logs', label: '操作日志', desc: '审计后台所有操作。' },
-      { key: 'base-settings', label: '基础设置', desc: '配置平台基础信息。' },
+      { key: 'calendar-view', label: '统一日历' },
+      { key: 'appointments', label: '预约调度' },
+    ],
+  },
+  {
+    key: 'workorders',
+    label: '工单中心',
+    icon: Tickets,
+    badge: 5,
+    tabs: [
+      { key: 'task-flow', label: '工单任务' },
+      { key: 'exceptions', label: '异常督办' },
+    ],
+  },
+  { key: 'messages', label: '统一消息', icon: ChatDotRound, badge: 2, tabs: [{ key: 'message-center', label: '消息记录' }] },
+  { key: 'properties', label: '房源状态', icon: House, tabs: [{ key: 'property-status', label: '状态流转' }] },
+  { key: 'staff', label: '人员排班', icon: UserFilled, tabs: [{ key: 'staff-load', label: '负载排班' }] },
+  { key: 'complaints', label: '投诉闭环', icon: Tickets, badge: 1, tabs: [{ key: 'complaint-flow', label: '投诉处理' }] },
+  { key: 'finance', label: '押金财务', icon: Wallet, badge: 2, tabs: [{ key: 'deposit-finance', label: '财务处理' }] },
+  {
+    key: 'audit',
+    label: '权限审计',
+    icon: Lock,
+    tabs: [
+      { key: 'accounts-permissions', label: '账号权限' },
+      { key: 'operation-logs', label: '操作日志' },
     ],
   },
 ]
@@ -465,7 +472,9 @@ const properties = ref<any[]>([])
 const staff = ref<any[]>([])
 const exceptions = ref<any[]>([])
 const complaints = ref<any[]>([])
-const arbitrations = ref<any[]>([])
+const workOrders = ref<any[]>([])
+const messages = ref<any[]>([])
+const financeItems = ref<any[]>([])
 const warnings = ref<any[]>([])
 const accounts = ref<any[]>([])
 const logs = ref<any[]>([])
@@ -473,35 +482,6 @@ const metrics = ref<any[]>([])
 const cityRankRows = ref<any[]>([])
 const trendRows = ref<any[]>([])
 const settings = reactive<any>({ platformName: '', servicePhone: '', cities: [] })
-const rulesState = reactive<any>({
-  booking: { advanceHours: 4, maxActive: 3, lockHours: 24, cancelFee: true },
-  deposit: { ratio: '押一付一', refundDays: 3, deductions: ['清洁费', '维修费'] },
-  ai: { price: 80, distance: 70, room: 65, area: 55, facility: 60, score: 75, resultCount: 10, coldStart: 'hot-city' },
-  penalty: { tenantNoShow: '', fakeProperty: '', complaintLimit: 3, levels: ['一般', '较重', '严重'] },
-  notification: { scene: 'new-booking', channels: ['短信', '站内信'], targets: ['客户', '对接人'], template: '' },
-})
-
-const currentModule = computed(() => modules.find((item) => item.key === activeModule.value))
-const currentTabs = computed(() => currentModule.value?.tabs || [])
-const selectedTab = computed(() => currentTabs.value.find((item) => item.key === activeTab.value))
-const cities = computed(() => Array.from(new Set([...settings.cities, ...properties.value.map((item) => item.city)].filter(Boolean))))
-const filteredAppointments = computed(() => appointments.value.filter((item) => !filters.city || item.city === filters.city))
-const propertyStatusCards = computed(() => ['可租', '已预约', '已签约', '已下架'].map((label) => ({ label, value: properties.value.filter((item) => item.status === label).length })))
-const caseRows = computed(() => {
-  if (activeTab.value === 'complaints') {
-    return complaints.value.map((item) => ({
-      caseNo: item.id,
-      type: item.category,
-      parties: `${item.complainantName} / ${item.property || '平台'}`,
-      amount: item.city,
-      evidence: item.title,
-      status: item.status,
-      result: item.result,
-      source: 'complaint',
-    }))
-  }
-  return arbitrations.value.map((item) => ({ ...item, source: 'arbitration' }))
-})
 
 const businessRows = [
   { city: '伦敦', properties: 286, bookings: 86, contracts: 21, conversion: '24.4%' },
@@ -514,21 +494,55 @@ const funnelRows = [
   { label: '带看', value: 638, width: 48 },
   { label: '签约', value: 186, width: 28 },
 ]
-const performanceRows = [
-  { name: 'Anna', city: '伦敦', visits: 42, contracts: 12, rate: '28.6%', response: '12 分钟', complaints: 1, score: 4.8 },
-  { name: 'Mike', city: '纽约', visits: 35, contracts: 9, rate: '25.7%', response: '18 分钟', complaints: 2, score: 4.5 },
-  { name: 'Sofia', city: '悉尼', visits: 28, contracts: 7, rate: '25.0%', response: '16 分钟', complaints: 0, score: 4.9 },
-]
-const aiWeightRows = [
-  { key: 'price', label: '价格权重' },
-  { key: 'distance', label: '距离权重' },
-  { key: 'room', label: '房型权重' },
-  { key: 'area', label: '面积权重' },
-  { key: 'facility', label: '配套权重' },
-  { key: 'score', label: '评分权重' },
-]
+
+const currentModule = computed(() => modules.find((item) => item.key === activeModule.value))
+const currentTabs = computed(() => currentModule.value?.tabs || [])
+const cities = computed(() => Array.from(new Set([...settings.cities, ...properties.value.map((item) => item.city)].filter(Boolean))))
+const keyword = computed(() => globalKeyword.value.trim().toLowerCase())
+const filteredAppointments = computed(() => appointments.value.filter((item) => (!filters.city || item.city === filters.city) && matchKeyword(item)))
+const filteredProperties = computed(() => properties.value.filter(matchKeyword))
+const filteredStaff = computed(() => staff.value.filter(matchKeyword))
+const filteredComplaints = computed(() => complaints.value.filter(matchKeyword))
+const filteredWorkOrders = computed(() => workOrders.value.filter(matchKeyword))
+const filteredMessages = computed(() => messages.value.filter(matchKeyword))
+const filteredFinanceItems = computed(() => financeItems.value.filter(matchKeyword))
+const filteredExceptions = computed(() => exceptions.value.filter(matchKeyword))
+const filteredAccounts = computed(() => accounts.value.filter(matchKeyword))
+const filteredLogs = computed(() => logs.value.filter(matchKeyword))
+const propertyStatusCards = computed(() =>
+  ['可租', '已预约', '带看中', '已签约', '已下架'].map((label) => ({
+    label,
+    value: properties.value.filter((item) => item.status === label).length,
+  })),
+)
+const calendarDays = computed(() => {
+  const base = [
+    { week: '周一', date: '07/06' },
+    { week: '周二', date: '07/07' },
+    { week: '周三', date: '07/08' },
+    { week: '周四', date: '07/09' },
+    { week: '周五', date: '07/10' },
+    { week: '周六', date: '07/11' },
+    { week: '周日', date: '07/12' },
+  ]
+  return base.map((day, index) => {
+    const events = appointments.value.slice(index, index + 2).map((item) => `${item.time?.slice(11) || ''} ${item.property}`)
+    if (index === 2) events.push('锁定冲突 2')
+    return { ...day, events, count: events.length }
+  })
+})
+const processStatusOptions = computed(() => {
+  if (activeCollection.value === 'financeItems') return ['待审核', '处理中', '已退款', '已扣款', '已完结']
+  if (activeCollection.value === 'complaints') return ['待处理', '处理中', '已完结', '已驳回']
+  return ['待处理', '处理中', '已完结', '已转派', '已驳回']
+})
 
 onMounted(loadPortalData)
+
+function matchKeyword(item: any) {
+  if (!keyword.value) return true
+  return JSON.stringify(item).toLowerCase().includes(keyword.value)
+}
 
 function selectModule(key: string) {
   activeModule.value = key
@@ -541,12 +555,13 @@ function applyState(state: PortalState) {
   staff.value = state.staff || []
   exceptions.value = state.exceptions || []
   complaints.value = state.complaints || []
-  arbitrations.value = state.arbitrations || []
+  workOrders.value = state.workOrders || []
+  messages.value = state.messages || []
+  financeItems.value = state.financeItems || []
   warnings.value = state.warnings || []
   accounts.value = state.accounts || []
   logs.value = state.logs || []
   Object.assign(settings, state.settings || {})
-  Object.assign(rulesState, state.rules || {})
 }
 
 async function loadPortalData() {
@@ -563,10 +578,10 @@ async function loadPortalData() {
 }
 
 function statusType(status: string) {
-  if (['已确认', '可租', '已签约', '已通过', '启用', '已完结', '已处理', '已仲裁'].includes(status)) return 'success'
-  if (['待分配', '待确认', '待仲裁', '待处理'].includes(status)) return 'warning'
-  if (['处理中', '已预约', '管理员介入', '跨城支援'].includes(status)) return 'primary'
-  if (['已取消', '已驳回', '已下架', '禁用'].includes(status)) return 'danger'
+  if (['已确认', '可租', '已签约', '启用', '已完结', '已处理', '已退款', '已扣款', '已读'].includes(status)) return 'success'
+  if (['待分配', '待确认', '待处理', '待审核', '未读'].includes(status)) return 'warning'
+  if (['处理中', '已预约', '带看中', '管理员介入', '跨城支援', '已转派', '在岗'].includes(status)) return 'primary'
+  if (['已取消', '已驳回', '已下架', '禁用', '休息'].includes(status)) return 'danger'
   return 'info'
 }
 
@@ -587,75 +602,59 @@ async function assignAppointment(row: any) {
 }
 
 async function bulkAssign() {
-  if (!appointments.value.length) return
-  await assignAppointment(appointments.value[0])
+  const target = appointments.value.find((item) => item.status === '待分配') || appointments.value[0]
+  if (target) await assignAppointment(target)
 }
 
-async function updateItem(collection: string, id: string, status: string) {
-  await adminPortalService.updateItem(collection, id, { status })
+async function updateItem(collection: string, id: string, status: string, result?: string) {
+  await adminPortalService.updateItem(collection, id, { status, result })
   ElMessage.success('状态已更新并写入日志')
   await loadPortalData()
 }
 
-async function recordAction(target: string, message: string) {
-  ElMessage.success(`${target}：${message}`)
+function openProcess(row: any, collection: string, title: string) {
+  activeRecord.value = row
+  activeCollection.value = collection
+  processDialogTitle.value = title
+  processForm.status = row.status === '待处理' ? '处理中' : row.status
+  processForm.result = row.result || ''
+  processDialogVisible.value = true
 }
 
-function showEvidence(row: any) {
-  ElMessageBox.alert(row.evidence || '暂无材料', `${row.caseNo} 材料摘要`)
-}
-
-function openDecisionDialog(row: any) {
-  activeCase.value = row
-  decisionForm.status = row.status === '待处理' ? '处理中' : row.status
-  decisionForm.result = row.result || ''
-  decisionDialogVisible.value = true
-}
-
-async function rejectCase(row: any) {
-  activeCase.value = row
-  decisionForm.status = '已驳回'
-  decisionForm.result = '材料不足或不符合平台处理规则。'
-  await submitDecision()
-}
-
-async function submitDecision() {
-  if (!activeCase.value) return
-  if (!decisionForm.result.trim()) {
-    ElMessage.error('请填写处理说明')
+async function submitProcess() {
+  if (!activeRecord.value) return
+  if (!processForm.result.trim()) {
+    ElMessage.error('请填写处理记录')
     return
   }
-  if (activeCase.value.source === 'complaint') {
-    await adminPortalService.updateComplaint(activeCase.value.caseNo, { status: decisionForm.status, result: decisionForm.result })
+  if (activeCollection.value === 'complaints') {
+    await adminPortalService.updateComplaint(activeRecord.value.id, { status: processForm.status, result: processForm.result })
   } else {
-    await adminPortalService.updateItem('arbitrations', activeCase.value.caseNo, { status: decisionForm.status, result: decisionForm.result })
+    await updateItem(activeCollection.value, activeRecord.value.id, processForm.status, processForm.result)
   }
-  decisionDialogVisible.value = false
-  ElMessage.success('处理结果已提交并留痕')
+  processDialogVisible.value = false
+  ElMessage.success('处理记录已提交')
   await loadPortalData()
 }
 
-async function publishRules() {
-  await ElMessageBox.confirm('规则修改将实时生效，确认发布？', '二次确认', {
-    type: 'warning',
-    confirmButtonText: '发布',
-    cancelButtonText: '取消',
-  })
-  await adminPortalService.updateRules(JSON.parse(JSON.stringify(rulesState)))
-  ElMessage.success('规则已发布')
+async function finishComplaint(row: any) {
+  await adminPortalService.updateComplaint(row.id, { status: '已完结', result: row.result || '投诉已处理并结案。' })
+  ElMessage.success('投诉已结案')
   await loadPortalData()
 }
 
-async function requestPenaltyRuleChange() {
-  const { value } = await ElMessageBox.prompt('请填写处罚规则变更原因、风险评估或业务背景', '处罚规则变更申请', {
-    confirmButtonText: '提交申请',
-    cancelButtonText: '取消',
-    inputType: 'textarea',
-    inputPlaceholder: '例如：某城市近期客户爽约率异常，需要评估是否调整预警阈值。',
-  })
-  await adminPortalService.createRuleChangeRequest({ scope: '处罚规则', reason: value })
-  ElMessage.success('变更申请已提交，处罚底层逻辑未被直接修改')
-  await loadPortalData()
+function jumpFromMetric(label: string) {
+  if (label.includes('投诉')) selectModule('complaints')
+  else if (label.includes('工单')) selectModule('workorders')
+  else if (label.includes('押金') || label.includes('财务')) selectModule('finance')
+  else if (label.includes('预警')) {
+    selectModule('workorders')
+    activeTab.value = 'exceptions'
+  } else selectModule('calendar')
+}
+
+async function recordAction(target: string, message: string) {
+  ElMessage.success(`${target}：${message}`)
 }
 
 function openFrontendComplaint() {
@@ -827,16 +826,13 @@ function openFrontendComplaint() {
   width: 140px;
 }
 
-.status-grid,
 .metric-grid,
-.dashboard-grid {
+.dashboard-grid,
+.status-grid,
+.calendar-board {
   display: grid;
   gap: 12px;
   margin-bottom: 14px;
-}
-
-.status-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .metric-grid {
@@ -847,30 +843,69 @@ function openFrontendComplaint() {
   grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
 }
 
-.stat-card,
+.status-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.calendar-board {
+  grid-template-columns: repeat(7, minmax(132px, 1fr));
+}
+
 .metric-card {
+  text-align: left;
+  cursor: pointer;
+}
+
+.metric-card,
+.stat-card,
+.day-cell {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 14px;
   background: #ffffff;
 }
 
+.metric-card.danger {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.metric-card span,
 .stat-card span,
-.metric-card span {
+.day-cell span {
   color: #6b7280;
   font-size: 13px;
 }
 
-.stat-card strong,
-.metric-card strong {
+.metric-card strong,
+.stat-card strong {
   display: block;
   margin-top: 8px;
   font-size: 28px;
   color: #111827;
 }
 
-.metric-card .danger {
-  color: #dc2626;
+.day-cell strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 18px;
+}
+
+.day-cell p {
+  margin: 8px 0;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.day-cell em {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+  font-style: normal;
 }
 
 .rank-row {
@@ -941,49 +976,6 @@ function openFrontendComplaint() {
   font-weight: 700;
 }
 
-.rules-form {
-  max-width: 820px;
-}
-
-.policy-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.policy-card {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 14px;
-  background: #f9fafb;
-}
-
-.policy-card span {
-  color: #6b7280;
-  font-size: 13px;
-}
-
-.policy-card strong {
-  display: block;
-  margin: 8px 0;
-  font-size: 18px;
-  color: #111827;
-}
-
-.policy-card p,
-.policy-lock p {
-  margin: 0;
-  color: #4b5563;
-  line-height: 1.7;
-}
-
-.policy-lock {
-  margin-top: 14px;
-  display: grid;
-  gap: 10px;
-  max-width: 720px;
-}
-
 :deep(.el-tabs__header) {
   margin-bottom: 0;
 }
@@ -999,7 +991,7 @@ function openFrontendComplaint() {
 
   .dashboard-grid,
   .status-grid,
-  .policy-grid {
+  .calendar-board {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1028,7 +1020,7 @@ function openFrontendComplaint() {
   .metric-grid,
   .dashboard-grid,
   .status-grid,
-  .policy-grid {
+  .calendar-board {
     grid-template-columns: 1fr;
   }
 }
