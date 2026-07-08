@@ -106,6 +106,10 @@
               <el-icon><Location /></el-icon>
               <span>地图找房</span>
             </el-menu-item>
+            <el-menu-item index="/complaints/new">
+              <el-icon><Tickets /></el-icon>
+              <span>提交投诉</span>
+            </el-menu-item>
             <el-menu-item v-if="authStore.isLoggedIn" index="/bookings/tenant">
               <el-icon><List /></el-icon>
               <span>我的预订</span>
@@ -149,6 +153,7 @@
                 <span>系统管理</span>
               </template>
               <el-menu-item index="/admin">仪表盘</el-menu-item>
+              <el-menu-item index="/admin-portal">超级管理员端</el-menu-item>
               <el-menu-item index="/admin/users">用户管理</el-menu-item>
               <el-menu-item index="/admin/properties">房源审核</el-menu-item>
               <el-menu-item index="/admin/import">数据导入</el-menu-item>

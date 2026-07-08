@@ -116,6 +116,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/CustomerService.vue'),
       },
       {
+        path: 'complaints/new',
+        name: 'complaint-submit',
+        component: () => import('@/views/ComplaintSubmit.vue'),
+      },
+      {
         path: 'platform-rules',
         name: 'platform-rules',
         component: () => import('@/views/PlatformRules.vue'),
@@ -174,6 +179,12 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, requiresAdmin: true },
       },
     ],
+  },
+  {
+    path: '/admin-portal',
+    name: 'super-admin-portal',
+    component: () => import('@/views/super-admin/AdminPortal.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/login',
