@@ -159,5 +159,10 @@ class BookingService:
         result = await self.session.scalars(stmt)
         return list(result)
 
+    async def list_all(self) -> list[Booking]:
+        stmt = select(Booking).order_by(Booking.created_at.desc())
+        result = await self.session.scalars(stmt)
+        return list(result)
+
     async def get(self, booking_id: int) -> Booking | None:
         return await self.session.get(Booking, booking_id)

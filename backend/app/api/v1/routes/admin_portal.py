@@ -8,15 +8,184 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_user, require_admin, require_workspace_user
+from app.models.user import User
 
 router = APIRouter()
 
 DATA_FILE = Path(__file__).resolve().parents[4] / "data" / "admin_portal_state.json"
 
+REPAIR_STEP_LABELS = ["待处理", "已派单", "维修中", "已完成"]
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def repair_progress_steps(status_value: str) -> list[dict[str, Any]]:
+    try:
+        active_index = REPAIR_STEP_LABELS.index(status_value)
+    except ValueError:
+        active_index = 0
+    return [
+        {
+            "key": label,
+            "label": label,
+            "done": index <= active_index,
+            "active": index == active_index,
+        }
+        for index, label in enumerate(REPAIR_STEP_LABELS)
+    ]
+
+
+def default_permission_catalog() -> list[dict[str, Any]]:
+    return [
+        {"key": "admin.all", "name": "最高管理员权限", "group": "系统权限", "desc": "角色、人员、工单、房源和审计全部可管"},
+        {"key": "admin.role.assign", "name": "分配后台角色", "group": "权限管理", "desc": "给人员设置角色模板"},
+        {"key": "admin.feature.toggle", "name": "单独功能开关", "group": "权限管理", "desc": "按账号勾选或关闭单项功能"},
+        {"key": "schedule.view", "name": "查看排班日期", "group": "人员排班", "desc": "查看人员日期、班次和在岗状态"},
+        {"key": "schedule.conflict", "name": "查看人员冲突", "group": "人员排班", "desc": "查看撞单、跨城和超负载提醒"},
+        {"key": "workorder.all", "name": "总工单查看", "group": "工单管理", "desc": "查看全部投诉、维修、带看反馈工单"},
+        {"key": "repair.assign", "name": "维修联系分配", "group": "预约对接", "desc": "分配维修联系人和处理进度"},
+        {"key": "appointment.list", "name": "客户预约列表", "group": "预约对接", "desc": "查看客户预约并推进确认"},
+        {"key": "feedback.work", "name": "工作反馈界面", "group": "预约对接", "desc": "填写带看、维修、客户沟通反馈"},
+        {"key": "property.publish", "name": "发布房源", "group": "房源管理", "desc": "进入房源发布流程"},
+        {"key": "property.manage", "name": "房源信息管理", "group": "房源管理", "desc": "维护房源状态、图片和运营信息"},
+        {"key": "repair.progress", "name": "维修项目进度监督", "group": "工单管理", "desc": "监督维修项目派单、维修中、完成情况"},
+        {"key": "repair.work", "name": "维修工处理界面", "group": "维修执行", "desc": "查看分配给自己的维修项目并推进节点进度"},
+        {"key": "audit.logs", "name": "操作日志审计", "group": "系统权限", "desc": "查看不可删除的后台操作记录"},
+    ]
+
+
+def all_permission_keys() -> list[str]:
+    return [item["key"] for item in default_permission_catalog()]
+
+
+def default_role_profiles() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": "super_admin",
+            "name": "超级管理员",
+            "desc": "最高权限，负责角色、排班、人员冲突、总工单和维修监督。",
+            "permissions": all_permission_keys(),
+            "locked": True,
+        },
+        {
+            "key": "appointment_staff",
+            "name": "预约对接人员",
+            "desc": "类似客服，负责客户预约、维修联系分配和工作反馈。",
+            "permissions": ["repair.assign", "appointment.list", "feedback.work", "workorder.all", "repair.progress"],
+            "locked": False,
+        },
+        {
+            "key": "property_manager",
+            "name": "房源管理人员",
+            "desc": "负责房源发布、房源信息维护和房源状态运营。",
+            "permissions": ["property.publish", "property.manage"],
+            "locked": False,
+        },
+        {
+            "key": "repair_worker",
+            "name": "维修工",
+            "desc": "负责接收管理员分配的维修项目，按节点更新到场、维修中、完成和凭证记录。",
+            "permissions": ["repair.work", "repair.progress"],
+            "locked": False,
+        },
+    ]
+
+
+def default_accounts() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "A-001",
+            "name": "superadmin",
+            "login": "superadmin",
+            "trialPassword": "Admin@123456",
+            "roleKey": "super_admin",
+            "role": "超级管理员",
+            "phone": "138****0000",
+            "twoFactor": True,
+            "status": "启用",
+            "permissions": all_permission_keys(),
+        },
+        {
+            "id": "A-002",
+            "name": "appointment_staff",
+            "login": "appointment_staff",
+            "trialPassword": "Staff@123456",
+            "roleKey": "appointment_staff",
+            "role": "预约对接人员",
+            "phone": "139****1201",
+            "twoFactor": True,
+            "status": "启用",
+            "permissions": ["repair.assign", "appointment.list", "feedback.work", "workorder.all", "repair.progress"],
+        },
+        {
+            "id": "A-003",
+            "name": "property_manager",
+            "login": "property_manager",
+            "trialPassword": "Property@123456",
+            "roleKey": "property_manager",
+            "role": "房源管理人员",
+            "phone": "137****3208",
+            "twoFactor": True,
+            "status": "启用",
+            "permissions": ["property.publish", "property.manage"],
+        },
+        {
+            "id": "A-004",
+            "name": "repair_worker",
+            "login": "repair_worker",
+            "trialPassword": "Repair@123456",
+            "roleKey": "repair_worker",
+            "role": "维修工",
+            "phone": "136****4500",
+            "twoFactor": True,
+            "status": "启用",
+            "permissions": ["repair.work", "repair.progress"],
+        },
+    ]
+
+
+def default_schedules() -> list[dict[str, Any]]:
+    return [
+        {"id": "SCH-001", "date": "2026-07-13", "name": "Anna", "role": "预约对接人员", "city": "伦敦", "shift": "09:00-18:00", "workOrders": 14, "conflict": "预约撞单 2 笔", "status": "冲突"},
+        {"id": "SCH-002", "date": "2026-07-13", "name": "Mike", "role": "预约对接人员", "city": "纽约", "shift": "10:00-19:00", "workOrders": 7, "conflict": "无", "status": "正常"},
+        {"id": "SCH-003", "date": "2026-07-13", "name": "Sofia", "role": "房源管理人员", "city": "悉尼", "shift": "休息日", "workOrders": 0, "conflict": "休息日被分配带看", "status": "冲突"},
+    ]
+
+
+def default_work_feedbacks() -> list[dict[str, Any]]:
+    return [
+        {"id": "FB-001", "staff": "Anna", "related": "BK-10291", "type": "客户预约", "content": "客户希望改到明天下午带看，等待二次确认。", "createdAt": "2026-07-13 10:20", "status": "待跟进"},
+        {"id": "FB-002", "staff": "Mike", "related": "RP-5002", "type": "维修联系", "content": "已联系维修方，预计今日 17:00 前上门。", "createdAt": "2026-07-13 11:05", "status": "处理中"},
+    ]
+
+
+def merge_default_rows(state: dict[str, Any], key: str, id_key: str = "id") -> bool:
+    defaults = seed_state()[key]
+    rows = state.setdefault(key, [])
+    existing_ids = {row.get(id_key) for row in rows}
+    changed = False
+    for item in defaults:
+        if item.get(id_key) not in existing_ids:
+            rows.append(item)
+            changed = True
+    return changed
+
+
+def role_name_by_key(role_key: str) -> str:
+    for role in default_role_profiles():
+        if role["key"] == role_key:
+            return role["name"]
+    return role_key
+
+
+def default_permissions_for_role(role_key: str) -> list[str]:
+    for role in default_role_profiles():
+        if role["key"] == role_key:
+            return list(role["permissions"])
+    return []
 
 
 def seed_state() -> dict[str, Any]:
@@ -159,6 +328,12 @@ def seed_state() -> dict[str, Any]:
                 "date": "2026-06-27",
                 "status": "待处理",
                 "owner": "维修组",
+                "assignee": "",
+                "progressSteps": repair_progress_steps("待处理"),
+                "reason": "",
+                "materials": "",
+                "evidenceImages": [],
+                "updateLogs": [],
                 "result": "",
             },
             {
@@ -170,6 +345,12 @@ def seed_state() -> dict[str, Any]:
                 "date": "2026-06-25",
                 "status": "已派单",
                 "owner": "维修组",
+                "assignee": "repair_worker",
+                "progressSteps": repair_progress_steps("已派单"),
+                "reason": "",
+                "materials": "",
+                "evidenceImages": [],
+                "updateLogs": [],
                 "result": "",
             },
             {
@@ -181,6 +362,12 @@ def seed_state() -> dict[str, Any]:
                 "date": "2026-06-22",
                 "status": "维修中",
                 "owner": "维修组",
+                "assignee": "repair_worker",
+                "progressSteps": repair_progress_steps("维修中"),
+                "reason": "",
+                "materials": "",
+                "evidenceImages": [],
+                "updateLogs": [],
                 "result": "",
             },
         ],
@@ -242,10 +429,14 @@ def seed_state() -> dict[str, Any]:
             "notification": {"scene": "new-booking", "channels": ["短信", "站内信"], "targets": ["客户", "对接人"], "template": "您好，您有新的预约：{booking_time}，房源：{property_title}。"},
         },
         "ruleChangeRequests": [],
-        "accounts": [
-            {"id": "A-001", "name": "superadmin", "role": "超级管理员", "phone": "138****0000", "twoFactor": True, "status": "启用"},
-            {"id": "A-002", "name": "ops_london", "role": "城市运营", "phone": "139****1201", "twoFactor": True, "status": "启用"},
-        ],
+        "permissionCatalog": default_permission_catalog(),
+        "roleProfiles": default_role_profiles(),
+        "schedules": default_schedules(),
+        "workFeedbacks": default_work_feedbacks(),
+        "reports": [],
+        "exportRequests": [],
+        "actionHistory": [],
+        "accounts": default_accounts(),
         "settings": {"platformName": "AI 全球公寓租赁", "servicePhone": "+86 400-888-0000", "cities": ["伦敦", "纽约", "悉尼"]},
         "logs": [
             {"operator": "system", "time": timestamp, "type": "系统初始化", "target": "Admin Portal", "content": "创建第一版可用数据", "ip": "127.0.0.1"}
@@ -261,12 +452,82 @@ def load_state() -> dict[str, Any]:
     state = json.loads(DATA_FILE.read_text(encoding="utf-8"))
     defaults = seed_state()
     changed = False
-    for key in ("workOrders", "repairs", "messages", "financeItems"):
+    for key in (
+        "workOrders",
+        "repairs",
+        "messages",
+        "financeItems",
+        "permissionCatalog",
+        "roleProfiles",
+        "schedules",
+        "workFeedbacks",
+        "reports",
+        "exportRequests",
+        "actionHistory",
+        "accounts",
+    ):
         if key not in state:
             state[key] = defaults[key]
             changed = True
+    for key in ("permissionCatalog", "roleProfiles", "schedules", "workFeedbacks", "accounts"):
+        if merge_default_rows(state, key):
+            changed = True
+    accounts = state.setdefault("accounts", [])
+    for default_account in default_accounts():
+        account = next((item for item in accounts if item.get("id") == default_account["id"]), None)
+        if account is None:
+            accounts.append(default_account)
+            changed = True
+            continue
+        if not account.get("login") or account.get("name") in {"ops_london"}:
+            account.update(default_account)
+            changed = True
+    valid_permissions = set(all_permission_keys())
+    role_permission_map = {role["key"]: list(role["permissions"]) for role in state.get("roleProfiles", [])}
+    for account in state.get("accounts", []):
+        role_key = account.get("roleKey")
+        if not role_key:
+            role_key = "super_admin" if account.get("name") == "superadmin" else "appointment_staff"
+            account["roleKey"] = role_key
+            changed = True
+        role_name = role_name_by_key(role_key)
+        if account.get("role") != role_name:
+            account["role"] = role_name
+            changed = True
+        if account.get("id") == "A-001":
+            account["roleKey"] = "super_admin"
+            account["role"] = "超级管理员"
+            account["permissions"] = all_permission_keys()
+            account["status"] = "启用"
+            account.setdefault("login", "superadmin")
+            account.setdefault("trialPassword", "Admin@123456")
+            changed = True
+            continue
+        if "permissions" not in account:
+            account["permissions"] = role_permission_map.get(role_key, default_permissions_for_role(role_key))
+            changed = True
+        clean_permissions = [item for item in account.get("permissions", []) if item in valid_permissions]
+        if clean_permissions != account.get("permissions"):
+            account["permissions"] = clean_permissions
+            changed = True
     existing_repair_work_orders = {item.get("related") for item in state.get("workOrders", []) if item.get("type") == "维修报修"}
     for repair in state.get("repairs", []):
+        if "assignee" not in repair:
+            repair["assignee"] = "repair_worker" if repair.get("status") in {"已派单", "维修中"} else ""
+            changed = True
+        steps = repair_progress_steps(repair.get("status", "待处理"))
+        if repair.get("progressSteps") != steps:
+            repair["progressSteps"] = steps
+            changed = True
+        for field, default_value in (
+            ("reason", ""),
+            ("materials", ""),
+            ("evidenceImages", []),
+            ("updateLogs", []),
+        ):
+            if field not in repair:
+                repair[field] = list(default_value) if isinstance(default_value, list) else default_value
+                changed = True
         if repair["id"] not in existing_repair_work_orders:
             state.setdefault("workOrders", []).append(repair_to_work_order(repair))
             changed = True
@@ -312,6 +573,16 @@ class StatusUpdate(BaseModel):
     result: str | None = None
 
 
+class AccountPermissionUpdate(BaseModel):
+    roleKey: str | None = None
+    permissions: list[str] | None = None
+    status: str | None = None
+
+
+class RolePermissionUpdate(BaseModel):
+    permissions: list[str] = Field(default_factory=list)
+
+
 class AppointmentAssign(BaseModel):
     assignee: str = Field(min_length=1, max_length=80)
 
@@ -324,8 +595,18 @@ class RepairCreate(BaseModel):
 
 
 class RepairUpdate(BaseModel):
-    status: str
+    status: str | None = None
+    assignee: str | None = None
     result: str | None = None
+    reason: str | None = None
+    materials: str | None = None
+    evidenceImages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PortalActionCreate(BaseModel):
+    action: str = Field(min_length=1, max_length=80)
+    target: str = Field(min_length=1, max_length=120)
+    content: str = Field(min_length=1, max_length=500)
 
 
 @router.get("/public/options")
@@ -393,7 +674,7 @@ def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
         "id": f"WO-{repair['id'].replace('RP-', '')}",
         "type": "维修报修",
         "title": repair["desc"],
-        "owner": repair.get("owner") or "维修组",
+        "owner": repair.get("assignee") or repair.get("owner") or "维修组",
         "related": repair["id"],
         "deadline": "48 小时内",
         "priority": "重要" if repair.get("category") in {"水电", "家电"} else "一般",
@@ -403,8 +684,11 @@ def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/repairs")
-async def list_repairs() -> list[dict[str, Any]]:
-    return load_state().get("repairs", [])
+async def list_repairs(current_user: User = Depends(get_current_user)) -> list[dict[str, Any]]:
+    repairs = load_state().get("repairs", [])
+    if current_user.role.value == "repair_worker":
+        return [item for item in repairs if item.get("assignee") == current_user.username]
+    return repairs
 
 
 @router.post("/repairs", status_code=status.HTTP_201_CREATED)
@@ -420,6 +704,12 @@ async def create_repair(payload: RepairCreate) -> dict[str, Any]:
         "date": now()[:10],
         "status": "待处理",
         "owner": "维修组",
+        "assignee": "",
+        "progressSteps": repair_progress_steps("待处理"),
+        "reason": "",
+        "materials": "",
+        "evidenceImages": [],
+        "updateLogs": [],
         "result": "",
     }
     state["repairs"].insert(0, repair)
@@ -447,15 +737,42 @@ async def update_repair(repair_id: str, payload: RepairUpdate) -> dict[str, Any]
     state = load_state()
     for repair in state.get("repairs", []):
         if repair["id"] == repair_id:
-            repair["status"] = payload.status
+            if payload.status is not None:
+                repair["status"] = payload.status
+                repair["progressSteps"] = repair_progress_steps(payload.status)
+            if payload.assignee is not None:
+                repair["assignee"] = payload.assignee
+                repair["owner"] = payload.assignee or "维修组"
             if payload.result is not None:
                 repair["result"] = payload.result
+            if payload.reason is not None:
+                repair["reason"] = payload.reason
+            if payload.materials is not None:
+                repair["materials"] = payload.materials
+            if payload.evidenceImages:
+                repair["evidenceImages"] = payload.evidenceImages
+            if payload.reason is not None or payload.materials is not None or payload.evidenceImages:
+                repair.setdefault("updateLogs", []).insert(
+                    0,
+                    {
+                        "time": now(),
+                        "status": repair.get("status"),
+                        "assignee": repair.get("assignee") or "",
+                        "reason": payload.reason or "",
+                        "materials": payload.materials or "",
+                        "result": payload.result or "",
+                        "images": payload.evidenceImages,
+                    },
+                )
             for work_order in state.get("workOrders", []):
                 if work_order.get("related") == repair_id:
-                    work_order["status"] = payload.status
+                    if payload.status is not None:
+                        work_order["status"] = payload.status
+                    if payload.assignee is not None:
+                        work_order["owner"] = payload.assignee or "维修组"
                     if payload.result is not None:
                         work_order["result"] = payload.result
-            append_log(state, "维修工单更新", repair_id, f"状态更新为 {payload.status}；处理记录：{payload.result or '-'}")
+            append_log(state, "维修工单更新", repair_id, f"状态更新为 {repair['status']}；维修工：{repair.get('assignee') or '-'}；原因：{payload.reason or '-'}；材料：{payload.materials or '-'}；处理记录：{payload.result or '-'}")
             save_state(state)
             return repair
     raise HTTPException(status_code=404, detail="Repair not found")
@@ -500,6 +817,135 @@ async def get_overview(_: object = Depends(require_admin)) -> dict[str, Any]:
 @router.get("/state")
 async def get_admin_portal_state(_: object = Depends(require_admin)) -> dict[str, Any]:
     return load_state()
+
+
+@router.post("/actions", status_code=status.HTTP_201_CREATED)
+async def create_portal_action(
+    payload: PortalActionCreate,
+    current_user: object = Depends(require_workspace_user),
+) -> dict[str, Any]:
+    state = load_state()
+    timestamp = now()
+    action = {
+        "id": f"ACT-{len(state.setdefault('actionHistory', [])) + 1:04d}",
+        "action": payload.action,
+        "target": payload.target,
+        "content": payload.content,
+        "createdAt": timestamp,
+        "operator": getattr(current_user, "username", "workspace"),
+        "status": "已记录",
+    }
+
+    if payload.action == "report.generate":
+        report = {
+            "id": f"RPT-{len(state.setdefault('reports', [])) + 1:04d}",
+            "name": "运营综合报表",
+            "source": "真实预约、投诉、工单、房源状态",
+            "bookings": len(state.get("appointments", [])),
+            "complaints": len(state.get("complaints", [])),
+            "workOrders": len(state.get("workOrders", [])),
+            "properties": len(state.get("properties", [])),
+            "createdAt": timestamp,
+            "status": "已生成",
+        }
+        state["reports"].insert(0, report)
+        action["status"] = "已生成报表"
+    elif payload.action == "report.export":
+        export_request = {
+            "id": f"EXP-{len(state.setdefault('exportRequests', [])) + 1:04d}",
+            "name": "运营数据导出",
+            "scope": "预约、投诉、工单、财务、房源",
+            "applicant": "superadmin",
+            "createdAt": timestamp,
+            "status": "待审批",
+        }
+        state["exportRequests"].insert(0, export_request)
+        action["status"] = "已提交导出审批"
+    elif payload.action == "exception.remind":
+        for exception in state.get("exceptions", []):
+            if exception.get("id") == payload.target:
+                exception["status"] = "处理中"
+                exception["result"] = payload.content
+                state.setdefault("messages", []).insert(
+                    0,
+                    {
+                        "id": f"MSG-{len(state.get('messages', [])) + 7001}",
+                        "channel": "督办",
+                        "sender": getattr(current_user, "username", "workspace"),
+                        "target": exception.get("owner", "对接人"),
+                        "summary": payload.content,
+                        "related": payload.target,
+                        "createdAt": timestamp,
+                        "status": "未读",
+                    },
+                )
+                action["status"] = "已催办"
+                break
+
+    state["actionHistory"].insert(0, action)
+    append_log(state, "运营动作", payload.target, payload.content, operator=getattr(current_user, "username", "workspace"))
+    save_state(state)
+    return action
+
+
+@router.patch("/accounts/{account_id}")
+async def update_account_permissions(
+    account_id: str,
+    payload: AccountPermissionUpdate,
+    _: object = Depends(require_admin),
+) -> dict[str, Any]:
+    state = load_state()
+    valid_roles = {role["key"] for role in state.get("roleProfiles", [])}
+    valid_permissions = set(all_permission_keys())
+    for account in state.get("accounts", []):
+        if account["id"] != account_id:
+            continue
+        if account_id == "A-001":
+            account["roleKey"] = "super_admin"
+            account["role"] = "超级管理员"
+            account["permissions"] = all_permission_keys()
+            account["status"] = "启用"
+            append_log(state, "账号权限更新", account_id, "超级管理员账号保持最高权限，不允许降权")
+            save_state(state)
+            return account
+        if payload.roleKey is not None:
+            if payload.roleKey not in valid_roles:
+                raise HTTPException(status_code=400, detail="Unsupported role")
+            account["roleKey"] = payload.roleKey
+            account["role"] = role_name_by_key(payload.roleKey)
+            if payload.permissions is None:
+                account["permissions"] = default_permissions_for_role(payload.roleKey)
+        if payload.permissions is not None:
+            account["permissions"] = [item for item in payload.permissions if item in valid_permissions]
+        if payload.status is not None:
+            account["status"] = payload.status
+        append_log(state, "账号权限更新", account_id, f"{account['name']} 更新为 {account['role']}")
+        save_state(state)
+        return account
+    raise HTTPException(status_code=404, detail="Account not found")
+
+
+@router.patch("/roles/{role_key}")
+async def update_role_permissions(
+    role_key: str,
+    payload: RolePermissionUpdate,
+    _: object = Depends(require_admin),
+) -> dict[str, Any]:
+    state = load_state()
+    valid_permissions = set(all_permission_keys())
+    for role in state.get("roleProfiles", []):
+        if role["key"] != role_key:
+            continue
+        if role.get("locked"):
+            role["permissions"] = all_permission_keys()
+            append_log(state, "角色权限更新", role_key, "超级管理员角色保持最高权限，不允许降权")
+            save_state(state)
+            return role
+        role["permissions"] = [item for item in payload.permissions if item in valid_permissions]
+        append_log(state, "角色权限更新", role_key, f"{role['name']} 权限已更新")
+        save_state(state)
+        return role
+    raise HTTPException(status_code=404, detail="Role not found")
 
 
 @router.patch("/complaints/{complaint_id}")

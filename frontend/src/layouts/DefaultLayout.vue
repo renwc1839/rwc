@@ -25,7 +25,10 @@
 
       <div class="header-right">
         <template v-if="authStore.isLoggedIn">
-          <el-tag v-if="authStore.isAdmin" type="danger" size="small" effect="dark">管理员</el-tag>
+          <el-tag v-if="authStore.isAdmin" type="danger" size="small" effect="dark">超级管理员</el-tag>
+          <el-tag v-else-if="authStore.isAppointmentStaff" type="success" size="small" effect="dark">预约对接人员</el-tag>
+          <el-tag v-else-if="authStore.isPropertyManager" type="warning" size="small" effect="dark">房源管理人员</el-tag>
+          <el-tag v-else-if="authStore.isRepairWorker" type="info" size="small" effect="dark">维修工</el-tag>
           <el-tag v-else-if="authStore.isLandlord" type="warning" size="small" effect="dark">公寓运营商</el-tag>
           <el-tag v-else type="info" size="small" effect="plain">租客</el-tag>
 
@@ -42,7 +45,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <!-- 租客菜单 -->
-                <template v-if="!authStore.isLandlord && !authStore.isAdmin">
+                <template v-if="!authStore.canUseWorkspace">
                   <el-dropdown-item @click="router.push('/profile')">
                     <el-icon><User /></el-icon> 个人中心
                   </el-dropdown-item>
@@ -51,17 +54,17 @@
                   </el-dropdown-item>
                 </template>
                 <!-- 房东/管理员菜单 -->
-                <template v-if="authStore.isLandlord || authStore.isAdmin">
-                  <el-dropdown-item @click="router.push('/workspace')">
+                <template v-if="authStore.canUseWorkspace">
+                  <el-dropdown-item @click="router.push(authStore.isRepairWorker ? '/workspace?tab=repairs' : '/workspace')">
                     <el-icon><DataAnalysis /></el-icon> 运营工作台
                   </el-dropdown-item>
-                  <el-dropdown-item @click="router.push('/bookings/landlord')">
+                  <el-dropdown-item v-if="authStore.canManageBookings" @click="router.push({ path: '/workspace', query: { tab: 'bookings' } })">
                     <el-icon><Tickets /></el-icon> 预约管理
                   </el-dropdown-item>
-                  <el-dropdown-item @click="router.push('/property/manage')">
+                  <el-dropdown-item v-if="authStore.canManageProperties" @click="router.push('/property/manage')">
                     <el-icon><Setting /></el-icon> 房源管理
                   </el-dropdown-item>
-                  <el-dropdown-item @click="router.push('/property/create')">
+                  <el-dropdown-item v-if="authStore.canPublishProperties" @click="router.push('/property/create')">
                     <el-icon><Plus /></el-icon> 发布房源
                   </el-dropdown-item>
                 </template>
@@ -93,7 +96,7 @@
           </el-menu-item>
 
           <!-- ====== 租客侧边栏 ====== -->
-          <template v-if="!authStore.isLandlord && !authStore.isAdmin">
+          <template v-if="!authStore.canUseWorkspace">
             <el-menu-item index="/ai-search">
               <el-icon><MagicStick /></el-icon>
               <span>AI 找房</span>
@@ -121,20 +124,20 @@
           </template>
 
           <!-- ====== 房东/管理员侧边栏 ====== -->
-          <template v-if="authStore.isLandlord || authStore.isAdmin">
-            <el-menu-item index="/workspace">
+          <template v-if="authStore.canUseWorkspace">
+            <el-menu-item :index="authStore.isRepairWorker ? '/workspace?tab=repairs' : '/workspace'">
               <el-icon><DataAnalysis /></el-icon>
-              <span>运营工作台</span>
+              <span>{{ authStore.isRepairWorker ? '维修工单' : '运营工作台' }}</span>
             </el-menu-item>
-            <el-menu-item index="/property/manage">
+            <el-menu-item v-if="authStore.canManageProperties" index="/property/manage">
               <el-icon><OfficeBuilding /></el-icon>
               <span>房源管理</span>
             </el-menu-item>
-            <el-menu-item index="/property/create">
+            <el-menu-item v-if="authStore.canPublishProperties" index="/property/create">
               <el-icon><Plus /></el-icon>
               <span>发布房源</span>
             </el-menu-item>
-            <el-menu-item index="/bookings/landlord">
+            <el-menu-item v-if="authStore.canManageBookings" index="/workspace?tab=bookings">
               <el-icon><Tickets /></el-icon>
               <span>预约管理</span>
             </el-menu-item>
@@ -146,20 +149,30 @@
 
           <!-- 管理员额外菜单 -->
           <template v-if="authStore.isAdmin">
-            <el-divider style="margin: 8px 0" />
-            <el-sub-menu index="admin-sub">
-              <template #title>
-                <el-icon><DataAnalysis /></el-icon>
-                <span>系统管理</span>
-              </template>
-              <el-menu-item index="/admin">仪表盘</el-menu-item>
-              <el-menu-item index="/admin-portal">超级管理员端</el-menu-item>
-              <el-menu-item index="/admin/users">用户管理</el-menu-item>
-              <el-menu-item index="/admin/properties">房源审核</el-menu-item>
-              <el-menu-item index="/admin/import">数据导入</el-menu-item>
-              <el-menu-item index="/admin/logs">审计日志</el-menu-item>
-              <el-menu-item index="/admin/embeddings">Embedding</el-menu-item>
-            </el-sub-menu>
+            <el-menu-item index="/admin">
+              <el-icon><DataAnalysis /></el-icon>
+              <span>仪表盘</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/users">
+              <el-icon><User /></el-icon>
+              <span>用户管理</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/properties">
+              <el-icon><OfficeBuilding /></el-icon>
+              <span>房源审核</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/import">
+              <el-icon><Plus /></el-icon>
+              <span>数据导入</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/logs">
+              <el-icon><Tickets /></el-icon>
+              <span>审计日志</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/embeddings">
+              <el-icon><MagicStick /></el-icon>
+              <span>Embedding</span>
+            </el-menu-item>
           </template>
         </el-menu>
       </el-aside>
@@ -193,6 +206,7 @@ const unreadCount = ref(0)
 
 const activeMenu = computed(() => {
   const path = route.path
+  if (path.startsWith('/workspace') && route.query.tab === 'bookings') return '/workspace?tab=bookings'
   if (path.startsWith('/admin')) return path
   if (path.startsWith('/notifications')) return '/notifications'
   if (path.startsWith('/property/')) {

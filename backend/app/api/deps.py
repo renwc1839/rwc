@@ -31,10 +31,25 @@ async def get_current_user(
 
 
 async def require_landlord(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in {UserRole.landlord, UserRole.admin}:
+    if current_user.role not in {UserRole.landlord, UserRole.property_manager, UserRole.admin}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Landlord or admin role required",
+            detail="Property manager or admin role required",
+        )
+    return current_user
+
+
+async def require_workspace_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role not in {
+        UserRole.landlord,
+        UserRole.property_manager,
+        UserRole.appointment_staff,
+        UserRole.repair_worker,
+        UserRole.admin,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workspace role required",
         )
     return current_user
 

@@ -146,7 +146,7 @@ const routes: RouteRecordRaw[] = [
         path: 'workspace',
         name: 'landlord-workspace',
         component: () => import('@/views/AdminWorkspace.vue'),
-        meta: { requiresAuth: true, requiresLandlord: true },
+        meta: { requiresAuth: true, requiresWorkspace: true },
       },
       {
         path: 'admin/users',
@@ -183,8 +183,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin-portal',
     name: 'super-admin-portal',
-    component: () => import('@/views/super-admin/AdminPortal.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true },
+    redirect: '/workspace',
   },
   {
     path: '/login',
@@ -223,11 +222,19 @@ router.beforeEach((to, _from, next) => {
     return next({ name: 'home' })
   }
 
-  if (to.meta.requiresLandlord && user && user.role !== 'landlord' && user.role !== 'admin') {
+  const role = user?.role || ''
+  const propertyRoles = ['landlord', 'property_manager', 'admin']
+  const workspaceRoles = ['landlord', 'appointment_staff', 'property_manager', 'repair_worker', 'admin']
+
+  if (to.meta.requiresLandlord && user && !propertyRoles.includes(role)) {
     return next({ name: 'home' })
   }
 
-  if (to.meta.requiresAdmin && user && user.role !== 'admin') {
+  if (to.meta.requiresWorkspace && user && !workspaceRoles.includes(role)) {
+    return next({ name: 'home' })
+  }
+
+  if (to.meta.requiresAdmin && user && role !== 'admin') {
     return next({ name: 'home' })
   }
 
