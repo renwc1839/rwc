@@ -7,10 +7,18 @@ export interface PortalState {
   exceptions: any[]
   complaints: any[]
   workOrders: any[]
+  repairs: any[]
   messages: any[]
   financeItems: any[]
   warnings: any[]
   rules: Record<string, any>
+  permissionCatalog: any[]
+  roleProfiles: any[]
+  schedules: any[]
+  workFeedbacks: any[]
+  reports: any[]
+  exportRequests: any[]
+  actionHistory: any[]
   accounts: any[]
   settings: Record<string, any>
   logs: any[]
@@ -61,4 +69,15 @@ export const adminPortalService = {
     return api.patch(`/admin-portal/items/${collection}/${id}`, data).then((r) => r.data)
   },
 
+  updateAccount(id: string, data: { roleKey?: string; permissions?: string[]; status?: string }): Promise<any> {
+    return api.patch(`/admin-portal/accounts/${id}`, data).then((r) => r.data)
+  },
+
+  updateRoleProfile(roleKey: string, data: { permissions: string[] }): Promise<any> {
+    return api.patch(`/admin-portal/roles/${roleKey}`, data).then((r) => r.data)
+  },
+
+  recordAction(data: { action: string; target: string; content: string }): Promise<any> {
+    return api.post('/admin-portal/actions', data).then((r) => r.data)
+  },
 }

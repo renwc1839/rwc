@@ -9,6 +9,20 @@ export interface Repair {
   date: string
   status: string
   owner?: string
+  assignee?: string
+  progressSteps?: Array<{ key: string; label: string; done: boolean; active: boolean }>
+  reason?: string
+  materials?: string
+  evidenceImages?: Array<{ name: string; size: number; dataUrl: string }>
+  updateLogs?: Array<{
+    time: string
+    status: string
+    assignee: string
+    reason: string
+    materials: string
+    result: string
+    images: Array<{ name: string; size: number; dataUrl: string }>
+  }>
   result?: string
 }
 
@@ -28,7 +42,14 @@ export const repairService = {
     return api.post('/admin-portal/repairs', data).then((r) => r.data)
   },
 
-  update(id: string, data: { status: string; result?: string }): Promise<Repair> {
+  update(id: string, data: {
+    status?: string
+    assignee?: string
+    result?: string
+    reason?: string
+    materials?: string
+    evidenceImages?: Array<{ name: string; size: number; dataUrl: string }>
+  }): Promise<Repair> {
     return api.patch(`/admin-portal/repairs/${id}`, data).then((r) => r.data)
   },
 }

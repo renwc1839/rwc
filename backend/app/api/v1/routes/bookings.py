@@ -1,7 +1,7 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db_session, require_landlord, require_tenant
+from app.api.deps import get_current_user, get_db_session, require_tenant
 from app.models.booking import BookingStatus
 from app.models.user import User, UserRole
 from app.schemas.booking import BookingCreate, BookingRead, BookingUpdate
@@ -47,7 +47,9 @@ async def list_bookings(
     current_user: User = Depends(get_current_user),
 ) -> list[BookingRead]:
     booking_service = BookingService(session)
-    if current_user.role in {UserRole.landlord, UserRole.admin}:
+    if current_user.role in {UserRole.admin, UserRole.appointment_staff}:
+        return await booking_service.list_all()
+    if current_user.role in {UserRole.landlord, UserRole.property_manager}:
         return await booking_service.list_by_landlord(current_user.id)
     return await booking_service.list_by_tenant(current_user.id)
 
@@ -73,7 +75,7 @@ async def update_booking_status(
     booking_id: int,
     update_in: BookingUpdate,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(get_current_user),
 ) -> BookingRead:
     if update_in.status not in {BookingStatus.approved, BookingStatus.rejected}:
         raise HTTPException(
@@ -86,8 +88,13 @@ async def update_booking_status(
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-    if current_user.id != booking.landlord_id and current_user.role != UserRole.admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the landlord can update this booking")
+    can_update_all = current_user.role in {UserRole.admin, UserRole.appointment_staff}
+    can_update_own = current_user.role in {UserRole.landlord, UserRole.property_manager} and current_user.id == booking.landlord_id
+    if not can_update_all and not can_update_own:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only appointment staff, admin, or the property owner can update this booking",
+        )
 
     updated = await booking_service.update_status(booking_id, update_in.status)
     return updated

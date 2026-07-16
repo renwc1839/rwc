@@ -7,7 +7,14 @@
         <span class="logo-text">AI全球公寓租赁</span>
       </div>
       <h2 class="auth-title">欢迎回来</h2>
-      <p class="auth-subtitle">登录您的账号，开始智能找房</p>
+      <p class="auth-subtitle">{{ loginMode === 'staff' ? '工作人员入口，仅限平台后台人员使用' : '前台用户入口，适用于租客和房东账号' }}</p>
+
+      <el-segmented
+        v-model="loginMode"
+        :options="loginModeOptions"
+        class="login-mode"
+        size="large"
+      />
 
       <el-form
         ref="formRef"
@@ -45,17 +52,20 @@
             class="submit-btn"
             round
           >
-            登录
+            {{ loginMode === 'staff' ? '工作人员登录' : '用户登录' }}
           </el-button>
         </el-form-item>
       </el-form>
 
-      <el-divider>其他登录方式</el-divider>
-      <el-button class="wechat-btn" @click="handleWechatLogin" :loading="wechatLoading" size="large" round>
+      <el-divider v-if="loginMode === 'user'">其他登录方式</el-divider>
+      <el-button v-if="loginMode === 'user'" class="wechat-btn" @click="handleWechatLogin" :loading="wechatLoading" size="large" round>
         💚 微信登录
       </el-button>
-      <div class="auth-footer">
+      <div v-if="loginMode === 'user'" class="auth-footer">
         还没有账号？<router-link to="/register">立即注册</router-link>
+      </div>
+      <div v-else class="staff-hint">
+        初始测试账号：superadmin / Admin@123456，appointment_staff / Staff@123456，property_manager / Property@123456，repair_worker / Repair@123456
       </div>
     </el-card>
   </div>
@@ -74,6 +84,15 @@ const route = useRoute()
 const authStore = useAuthStore()
 const formRef = ref<FormInstance>()
 const wechatLoading = ref(false)
+const loginMode = ref<'user' | 'staff'>((route.query.mode as 'user' | 'staff') || 'user')
+
+const loginModeOptions = [
+  { label: '前台用户', value: 'user' },
+  { label: '工作人员', value: 'staff' },
+]
+
+const staffRoles = ['admin', 'appointment_staff', 'property_manager', 'repair_worker']
+const userRoles = ['tenant', 'landlord']
 
 const form = reactive({
   username_or_email: '',
@@ -91,12 +110,25 @@ async function handleLogin() {
   if (!valid) return
 
   try {
-    await authStore.login({
+    const currentUser = await authStore.login({
       username_or_email: form.username_or_email,
       password: form.password,
     })
+
+    if (loginMode.value === 'staff' && !staffRoles.includes(currentUser.role)) {
+      authStore.logout()
+      ElMessage.warning('该账号不是后台工作人员账号，请切换到前台用户入口登录')
+      return
+    }
+
+    if (loginMode.value === 'user' && !userRoles.includes(currentUser.role)) {
+      authStore.logout()
+      ElMessage.warning('该账号是工作人员账号，请切换到工作人员入口登录')
+      return
+    }
+
     ElMessage.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/'
+    const redirect = (route.query.redirect as string) || (loginMode.value === 'staff' ? '/workspace' : '/')
     router.push(redirect)
   } catch {
     // handled by interceptor
@@ -170,6 +202,11 @@ async function handleWechatLogin() {
   margin-bottom: 24px;
 }
 
+.login-mode {
+  width: 100%;
+  margin-bottom: 20px;
+}
+
 .submit-btn {
   width: 100%;
   font-weight: 600;
@@ -199,5 +236,13 @@ async function handleWechatLogin() {
   color: var(--primary);
   text-decoration: none;
   font-weight: 600;
+}
+
+.staff-hint {
+  margin-top: 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
 }
 </style>

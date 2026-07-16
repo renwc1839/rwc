@@ -12,6 +12,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => !!token.value)
   const isLandlord = computed(() => user.value?.role === 'landlord' || user.value?.role === 'admin')
+  const isAppointmentStaff = computed(() => user.value?.role === 'appointment_staff')
+  const isPropertyManager = computed(() => user.value?.role === 'property_manager')
+  const isRepairWorker = computed(() => user.value?.role === 'repair_worker')
+  const canUseWorkspace = computed(() => ['landlord', 'appointment_staff', 'property_manager', 'repair_worker', 'admin'].includes(user.value?.role || ''))
+  const canManageProperties = computed(() => ['landlord', 'property_manager', 'admin'].includes(user.value?.role || ''))
+  const canPublishProperties = computed(() => ['landlord', 'property_manager', 'admin'].includes(user.value?.role || ''))
+  const canManageBookings = computed(() => ['landlord', 'appointment_staff', 'admin'].includes(user.value?.role || ''))
   const isAdmin = computed(() => user.value?.role === 'admin')
 
   function setAuth(newToken: string, newUser: User) {
@@ -89,6 +96,13 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     isLoggedIn,
     isLandlord,
+    isAppointmentStaff,
+    isPropertyManager,
+    isRepairWorker,
+    canUseWorkspace,
+    canManageProperties,
+    canPublishProperties,
+    canManageBookings,
     isAdmin,
     register,
     login,

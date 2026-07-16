@@ -12,6 +12,9 @@ class UserRole(str, enum.Enum):
     tenant = "tenant"
     landlord = "landlord"
     bd_manager = "bd_manager"
+    appointment_staff = "appointment_staff"
+    property_manager = "property_manager"
+    repair_worker = "repair_worker"
     admin = "admin"
 
 

@@ -79,8 +79,8 @@
           <div v-else class="panel">
             <PanelTitle title="数据报表" desc="从真实预约、投诉、签约、人员负载和房源状态做运营统计。" />
             <div class="toolbar-actions">
-              <el-button @click="recordAction('report', '已生成当前筛选报表')">生成报表</el-button>
-              <el-button type="primary" @click="recordAction('report', '已提交导出审批')">申请导出</el-button>
+              <el-button @click="recordAction('report.generate', 'report', '已生成当前筛选报表')">生成报表</el-button>
+              <el-button type="primary" @click="recordAction('report.export', 'report', '已提交导出审批')">申请导出</el-button>
             </div>
             <el-table :data="businessRows" border stripe>
               <el-table-column prop="city" label="城市" />
@@ -91,6 +91,32 @@
             </el-table>
             <div class="funnel">
               <div v-for="step in funnelRows" :key="step.label" :style="{ width: `${step.width}%` }">{{ step.label }} {{ step.value }}</div>
+            </div>
+            <div class="report-grid">
+              <div>
+                <h3>报表生成记录</h3>
+                <el-table :data="reports" border stripe>
+                  <el-table-column prop="id" label="报表号" width="110" />
+                  <el-table-column prop="name" label="名称" />
+                  <el-table-column prop="source" label="数据来源" min-width="220" />
+                  <el-table-column prop="createdAt" label="生成时间" min-width="170" />
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }"><el-tag type="success">{{ row.status }}</el-tag></template>
+                  </el-table-column>
+                </el-table>
+              </div>
+              <div>
+                <h3>导出审批记录</h3>
+                <el-table :data="exportRequests" border stripe>
+                  <el-table-column prop="id" label="申请号" width="110" />
+                  <el-table-column prop="name" label="名称" />
+                  <el-table-column prop="scope" label="导出范围" min-width="220" />
+                  <el-table-column prop="createdAt" label="申请时间" min-width="170" />
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+                  </el-table-column>
+                </el-table>
+              </div>
             </div>
           </div>
         </template>
@@ -179,7 +205,7 @@
               </el-table-column>
               <el-table-column label="操作" fixed="right" width="250">
                 <template #default="{ row }">
-                  <el-button size="small" @click="recordAction(row.id, `已催办 ${row.owner}`)">催办</el-button>
+                  <el-button size="small" @click="recordAction('exception.remind', row.id, `已催办 ${row.owner}`)">催办</el-button>
                   <el-button size="small" @click="updateItem('exceptions', row.id, '已转派')">转派</el-button>
                   <el-button size="small" type="warning" @click="updateItem('exceptions', row.id, '管理员介入')">介入</el-button>
                 </template>
@@ -478,22 +504,37 @@ const financeItems = ref<any[]>([])
 const warnings = ref<any[]>([])
 const accounts = ref<any[]>([])
 const logs = ref<any[]>([])
+const reports = ref<any[]>([])
+const exportRequests = ref<any[]>([])
+const actionHistory = ref<any[]>([])
 const metrics = ref<any[]>([])
 const cityRankRows = ref<any[]>([])
 const trendRows = ref<any[]>([])
 const settings = reactive<any>({ platformName: '', servicePhone: '', cities: [] })
 
-const businessRows = [
-  { city: '伦敦', properties: 286, bookings: 86, contracts: 21, conversion: '24.4%' },
-  { city: '纽约', properties: 213, bookings: 73, contracts: 18, conversion: '24.7%' },
-  { city: '悉尼', properties: 176, bookings: 55, contracts: 11, conversion: '20.0%' },
-]
-const funnelRows = [
-  { label: '浏览', value: 12860, width: 100 },
-  { label: '预约', value: 1420, width: 72 },
-  { label: '带看', value: 638, width: 48 },
-  { label: '签约', value: 186, width: 28 },
-]
+const businessRows = computed(() => {
+  const citySet = new Set([...settings.cities, ...properties.value.map((item) => item.city), ...appointments.value.map((item) => item.city)].filter(Boolean))
+  return Array.from(citySet).map((city) => {
+    const cityProperties = properties.value.filter((item) => item.city === city)
+    const cityBookings = appointments.value.filter((item) => item.city === city)
+    const contracts = cityBookings.filter((item) => item.status === '已签约').length + cityProperties.filter((item) => item.status === '已签约').length
+    const conversion = cityBookings.length ? `${Math.round((contracts / cityBookings.length) * 1000) / 10}%` : '0%'
+    return { city, properties: cityProperties.length, bookings: cityBookings.length, contracts, conversion }
+  })
+})
+const funnelRows = computed(() => {
+  const booking = appointments.value.length
+  const visit = appointments.value.filter((item) => ['已确认', '带看中', '已签约'].includes(item.status)).length
+  const sign = appointments.value.filter((item) => item.status === '已签约').length + properties.value.filter((item) => item.status === '已签约').length
+  const browse = Math.max(properties.value.length * 120 + booking * 20, booking, 1)
+  const width = (value: number) => Math.max(18, Math.round((value / browse) * 100))
+  return [
+    { label: '浏览', value: browse, width: 100 },
+    { label: '预约', value: booking, width: width(booking) },
+    { label: '带看', value: visit, width: width(visit) },
+    { label: '签约', value: sign, width: width(sign) },
+  ]
+})
 
 const currentModule = computed(() => modules.find((item) => item.key === activeModule.value))
 const currentTabs = computed(() => currentModule.value?.tabs || [])
@@ -561,6 +602,9 @@ function applyState(state: PortalState) {
   warnings.value = state.warnings || []
   accounts.value = state.accounts || []
   logs.value = state.logs || []
+  reports.value = state.reports || []
+  exportRequests.value = state.exportRequests || []
+  actionHistory.value = state.actionHistory || []
   Object.assign(settings, state.settings || {})
 }
 
@@ -653,8 +697,10 @@ function jumpFromMetric(label: string) {
   } else selectModule('calendar')
 }
 
-async function recordAction(target: string, message: string) {
-  ElMessage.success(`${target}：${message}`)
+async function recordAction(action: string, target: string, content: string) {
+  await adminPortalService.recordAction({ action, target, content })
+  ElMessage.success(content)
+  await loadPortalData()
 }
 
 function openFrontendComplaint() {
@@ -976,6 +1022,18 @@ function openFrontendComplaint() {
   font-weight: 700;
 }
 
+.report-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.report-grid h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
 :deep(.el-tabs__header) {
   margin-bottom: 0;
 }
@@ -991,6 +1049,7 @@ function openFrontendComplaint() {
 
   .dashboard-grid,
   .status-grid,
+  .report-grid,
   .calendar-board {
     grid-template-columns: 1fr 1fr;
   }
@@ -1020,6 +1079,7 @@ function openFrontendComplaint() {
   .metric-grid,
   .dashboard-grid,
   .status-grid,
+  .report-grid,
   .calendar-board {
     grid-template-columns: 1fr;
   }
