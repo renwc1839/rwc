@@ -79,12 +79,15 @@ class PropertyService:
         limit: int = 20,
         district: str | None = None,
         status: str | None = None,
+        property_manager_id: int | None = None,
     ) -> list[Property]:
         stmt = select(Property).order_by(Property.created_at.desc()).offset(skip).limit(limit)
         if district:
             stmt = stmt.where(Property.district == district)
         if status:
             stmt = stmt.where(Property.status == status)
+        if property_manager_id is not None:
+            stmt = stmt.where(Property.property_manager_id == property_manager_id)
         result = await self.session.scalars(stmt)
         return list(result)
 

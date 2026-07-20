@@ -4,13 +4,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db_session, require_landlord
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.property import PropertyCreate, PropertyRead, PropertySearchResult, PropertyUpdate
 from app.schemas.property_image import PropertyImageRead
 from app.services.property_service import PropertyService
 from app.services.user_service import UserService
 
 router = APIRouter()
+
+
+async def validate_property_manager(session: AsyncSession, user_id: int | None) -> None:
+    if user_id is None:
+        return
+    manager = await UserService(session).get(user_id)
+    if not manager or manager.role != UserRole.property_manager:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="property_manager_id must reference an existing property manager",
+        )
 
 
 @router.post("", response_model=PropertyRead, status_code=status.HTTP_201_CREATED)
@@ -30,6 +41,14 @@ async def create_property(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Landlords can only create properties for themselves",
         )
+    if current_user.role == UserRole.property_manager:
+        property_in = property_in.model_copy(update={"property_manager_id": current_user.id})
+    elif current_user.role != UserRole.admin and property_in.property_manager_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can assign a property manager",
+        )
+    await validate_property_manager(session, property_in.property_manager_id)
     return await PropertyService(session).create(property_in)
 
 
@@ -69,6 +88,7 @@ async def search_properties(
             status=prop.status,
             latitude=prop.latitude,
             longitude=prop.longitude,
+            property_manager_id=prop.property_manager_id,
             created_at=prop.created_at,
             updated_at=prop.updated_at,
             images=[
@@ -98,12 +118,14 @@ async def list_properties(
     limit: int = Query(default=20, ge=1, le=100),
     district: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
+    property_manager_id: int | None = Query(default=None),
 ) -> list[PropertyRead]:
     return await PropertyService(session).list(
         skip=skip,
         limit=limit,
         district=district,
         status=status_filter,
+        property_manager_id=property_manager_id,
     )
 
 
@@ -129,11 +151,24 @@ async def update_property(
     existing_property = await property_service.get(property_id)
     if not existing_property:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
-    if current_user.role.value != "admin" and existing_property.landlord_id != current_user.id:
+    if current_user.role == UserRole.property_manager:
+        if existing_property.property_manager_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Property managers can only update assigned properties",
+            )
+    elif current_user.role != UserRole.admin and existing_property.landlord_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Landlords can only update their own properties",
         )
+    if "property_manager_id" in property_in.model_fields_set:
+        if current_user.role != UserRole.admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can assign a property manager",
+            )
+        await validate_property_manager(session, property_in.property_manager_id)
 
     property_obj = await property_service.update(property_id, property_in)
     if not property_obj:

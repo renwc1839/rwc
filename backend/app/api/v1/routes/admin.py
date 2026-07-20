@@ -48,6 +48,26 @@ async def list_audit_logs(
     ]
 
 
+@router.get("/users", response_model=list[UserRead])
+async def list_users(
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(require_admin),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+    role: str | None = Query(default=None),
+) -> list[UserRead]:
+    user_role = None
+    if role is not None:
+        try:
+            user_role = UserRole(role)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role filter",
+            ) from exc
+    return await UserService(session).list(skip=skip, limit=limit, role=user_role)
+
+
 @router.patch("/properties/{property_id}/status")
 async def moderate_property(
     property_id: int,

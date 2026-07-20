@@ -26,7 +26,7 @@ export interface GeocodeResult {
 }
 
 export const propertyService = {
-  list(params?: { skip?: number; limit?: number; district?: string; status?: string }): Promise<Property[]> {
+  list(params?: { skip?: number; limit?: number; district?: string; status?: string; property_manager_id?: number }): Promise<Property[]> {
     return api.get('/properties', { params }).then((r) => r.data)
   },
 

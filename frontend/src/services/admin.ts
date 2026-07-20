@@ -16,6 +16,14 @@ export const adminService = {
     return api.get('/admin/logs', { params }).then((r) => r.data)
   },
 
+  listUsers(params?: {
+    skip?: number
+    limit?: number
+    role?: string
+  }): Promise<User[]> {
+    return api.get('/admin/users', { params }).then((r) => r.data)
+  },
+
   moderateProperty(propertyId: number, new_status: string): Promise<void> {
     return api.patch(`/admin/properties/${propertyId}/status`, null, {
       params: { new_status },

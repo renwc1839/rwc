@@ -46,5 +46,10 @@ class User(TimestampMixin, Base):
 
     properties: Mapped[list["Property"]] = relationship(
         back_populates="landlord",
+        foreign_keys="Property.landlord_id",
         cascade="all, delete-orphan",
+    )
+    managed_properties: Mapped[list["Property"]] = relationship(
+        back_populates="property_manager",
+        foreign_keys="Property.property_manager_id",
     )

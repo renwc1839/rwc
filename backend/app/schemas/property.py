@@ -26,6 +26,7 @@ class PropertyBase(BaseModel):
 
 class PropertyCreate(PropertyBase):
     landlord_id: int
+    property_manager_id: int | None = None
 
 
 class PropertyUpdate(BaseModel):
@@ -41,6 +42,7 @@ class PropertyUpdate(BaseModel):
     status: PropertyStatus | None = None
     latitude: Decimal | None = Field(default=None, ge=-90, le=90)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180)
+    property_manager_id: int | None = None
 
 
 class PropertyRead(PropertyBase):
@@ -48,6 +50,7 @@ class PropertyRead(PropertyBase):
 
     id: int
     landlord_id: int
+    property_manager_id: int | None = None
     created_at: datetime
     updated_at: datetime
     images: list[PropertyImageRead] = []
@@ -66,6 +69,7 @@ class PropertySearchResult(PropertyBase):
 
     id: int
     landlord_id: int
+    property_manager_id: int | None = None
     created_at: datetime
     updated_at: datetime
     images: list[PropertyImageRead] = []

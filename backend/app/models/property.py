@@ -47,6 +47,11 @@ class Property(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     landlord_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    property_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
 
     institute_id: Mapped[int | None] = mapped_column(ForeignKey("institutes.id", ondelete="SET NULL"), index=True, nullable=True)
 
@@ -77,7 +82,15 @@ class Property(TimestampMixin, Base):
 
     embedding: Mapped[list[float] | None] = mapped_column(VectorColumn)
 
-    landlord: Mapped["User"] = relationship(back_populates="properties")
+    landlord: Mapped["User"] = relationship(
+        back_populates="properties",
+        foreign_keys=[landlord_id],
+    )
+    property_manager: Mapped["User | None"] = relationship(
+        back_populates="managed_properties",
+        foreign_keys=[property_manager_id],
+        lazy="selectin",
+    )
 
     institute: Mapped["Institute | None"] = relationship(back_populates="properties")
 

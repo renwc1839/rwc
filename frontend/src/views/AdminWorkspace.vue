@@ -70,6 +70,26 @@
                 <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="负责人" width="180">
+              <template #default="{ row }">
+                <el-select
+                  v-if="isAdmin"
+                  :model-value="row.propertyManagerId || ''"
+                  size="small"
+                  placeholder="未分配"
+                  clearable
+                  @change="(value: number | string) => assignPropertyManager(row, value)"
+                >
+                  <el-option
+                    v-for="manager in propertyManagerOptions"
+                    :key="manager.id"
+                    :label="manager.username"
+                    :value="manager.id"
+                  />
+                </el-select>
+                <span v-else>{{ row.propertyManagerName }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="当前租客" width="100" prop="tenant" />
             <el-table-column label="操作" width="200">
               <template #default="{ row }">
@@ -523,7 +543,11 @@ import type { Booking, Notification } from '@/types/booking'
 import { useAuthStore } from '@/stores/auth'
 import { adminPortalService } from '@/services/adminPortal'
 import { propertyService } from '@/services/property'
+import { adminService } from '@/services/admin'
 import type { Property, PropertyStatus } from '@/types/property'
+import type { User } from '@/types/user'
+
+type PropertyManagerOption = Pick<User, 'id' | 'username'>
 import { notificationService } from '@/services/notification'
 
 const route = useRoute()
@@ -593,6 +617,7 @@ const repairUpdateForm = reactive({
 const repairs = ref<Repair[]>([])
 const bookings = ref<Booking[]>([])
 const properties = ref<Property[]>([])
+const propertyManagers = ref<User[]>([])
 const notifications = ref<Notification[]>([])
 const portalMessages = ref<any[]>([])
 const portalAccounts = ref<any[]>([])
@@ -610,6 +635,15 @@ const repairWorkerOptions = computed(() => {
   return workers.length ? workers : ['repair_worker']
 })
 const defaultRepairWorker = computed(() => repairWorkerOptions.value[0] || 'repair_worker')
+const propertyManagerOptions = computed<PropertyManagerOption[]>(() => {
+  if (propertyManagers.value.length) return propertyManagers.value
+  return portalAccounts.value
+    .filter((account) => account.roleKey === 'property_manager')
+    .map((account, index) => ({
+      id: Number(account.userId || account.numericId || index + 1),
+      username: account.login || account.name,
+    }))
+})
 const financePendingCount = computed(() => portalFinanceItems.value.filter((item) => !['已退款', '已扣款', '已完结'].includes(item.status)).length)
 const financeTotal = computed(() => portalFinanceItems.value.reduce((total, item) => {
   const amount = Number(String(item.amount || '').replace(/[^\d.-]/g, ''))
@@ -683,6 +717,10 @@ const propertyRows = computed(() => properties.value.map((property) => ({
   bathrooms: property.bathrooms,
   price: property.price_monthly,
   status: propertyStatusLabels[property.status] || property.status,
+  propertyManagerId: property.property_manager_id || null,
+  propertyManagerName: property.property_manager_id
+    ? propertyManagerOptions.value.find((manager) => manager.id === property.property_manager_id)?.username || `负责人 #${property.property_manager_id}`
+    : '未分配',
   tenant: property.status === 'rented' ? '已出租' : '—',
   raw: property,
 })))
@@ -792,6 +830,17 @@ async function updatePropertyStatus(row: any, status: PropertyStatus, successTex
   await fetchProperties()
 }
 
+async function assignPropertyManager(row: any, value: number | string) {
+  const propertyManagerId = value ? Number(value) : null
+  await propertyService.update(row.id, { property_manager_id: propertyManagerId })
+  const managerName = propertyManagerId
+    ? propertyManagerOptions.value.find((manager) => manager.id === propertyManagerId)?.username || `负责人 #${propertyManagerId}`
+    : '未分配'
+  await recordWorkspaceAction('property.manager.assign', `property-${row.id}`, `${row.address}：负责人调整为 ${managerName}`)
+  ElMessage.success(`房源负责人已调整为 ${managerName}`)
+  await fetchProperties()
+}
+
 async function maintainProperty(row: any) {
   await updatePropertyStatus(row, 'maintenance', '房源已标记为维护中')
 }
@@ -892,8 +941,25 @@ async function fetchBookings() {
 
 async function fetchProperties() {
   if (!canViewProperties.value) return
-  try { properties.value = await propertyService.list({ limit: 100 }) }
+  const params: { limit: number; property_manager_id?: number } = { limit: 100 }
+  if (role.value === 'property_manager' && authStore.user?.id) {
+    params.property_manager_id = authStore.user.id
+  }
+  try { properties.value = await propertyService.list(params) }
   catch { properties.value = [] }
+}
+
+async function fetchPropertyManagers() {
+  if (role.value === 'property_manager' && authStore.user) {
+    propertyManagers.value = [authStore.user]
+    return
+  }
+  if (!isAdmin.value) return
+  try {
+    propertyManagers.value = await adminService.listUsers({ role: 'property_manager', limit: 100 })
+  } catch {
+    propertyManagers.value = []
+  }
 }
 
 async function fetchNotifications() {
@@ -1052,7 +1118,8 @@ async function replyMessage(m: any) {
 
 onMounted(async () => {
   ensureAllowedTab()
-  await Promise.all([fetchBookings(), fetchRepairs(), fetchProperties(), fetchNotifications(), fetchPortalState()])
+  await Promise.all([fetchPropertyManagers(), fetchPortalState()])
+  await Promise.all([fetchBookings(), fetchRepairs(), fetchProperties(), fetchNotifications()])
 })
 </script>
 

@@ -14,7 +14,7 @@ export const usePropertyStore = defineStore('property', () => {
   const propertyImages = ref<PropertyImage[]>([])
   const imagesLoading = ref(false)
 
-  async function fetchList(params?: { skip?: number; limit?: number; district?: string; status?: string }) {
+  async function fetchList(params?: { skip?: number; limit?: number; district?: string; status?: string; property_manager_id?: number }) {
     loading.value = true
     try {
       properties.value = await propertyService.list(params)

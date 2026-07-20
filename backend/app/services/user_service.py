@@ -1,7 +1,7 @@
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserProfileUpdate, UserUpdate
 
 
@@ -29,8 +29,11 @@ class UserService:
         result = await self.session.scalars(stmt)
         return result.first()
 
-    async def list(self, *, skip: int = 0, limit: int = 20) -> list[User]:
-        stmt = select(User).order_by(User.created_at.desc()).offset(skip).limit(limit)
+    async def list(self, *, skip: int = 0, limit: int = 20, role: UserRole | None = None) -> list[User]:
+        stmt = select(User)
+        if role is not None:
+            stmt = stmt.where(User.role == role)
+        stmt = stmt.order_by(User.created_at.desc()).offset(skip).limit(limit)
         result = await self.session.scalars(stmt)
         return list(result)
 
