@@ -568,6 +568,15 @@ class ComplaintCreate(BaseModel):
     property: str | None = None
 
 
+class CustomerContactCreate(BaseModel):
+    sender: str = Field(min_length=1, max_length=80)
+    contact: str = Field(min_length=3, max_length=80)
+    summary: str = Field(min_length=3, max_length=500)
+    property: str | None = None
+    propertyId: int | None = None
+    channel: str = Field(default="房源咨询", max_length=40)
+
+
 class StatusUpdate(BaseModel):
     status: str
     result: str | None = None
@@ -667,6 +676,45 @@ async def create_complaint(payload: ComplaintCreate) -> dict[str, Any]:
     append_log(state, "投诉提交", complaint_id, f"{payload.complainantName} 提交投诉：{payload.title}", operator="customer")
     save_state(state)
     return complaint
+
+
+@router.post("/messages", status_code=status.HTTP_201_CREATED)
+async def create_customer_message(payload: CustomerContactCreate) -> dict[str, Any]:
+    state = load_state()
+    message_id = f"MSG-{len(state.get('messages', [])) + 7001}"
+    related = f"PROP-{payload.propertyId}" if payload.propertyId else ""
+    summary_parts = [payload.summary]
+    if payload.property:
+        summary_parts.append(f"关联房源：{payload.property}")
+    summary_parts.append(f"联系方式：{payload.contact}")
+    message = {
+        "id": message_id,
+        "channel": payload.channel or "房源咨询",
+        "sender": payload.sender,
+        "target": "预约对接组",
+        "summary": "；".join(summary_parts),
+        "related": related,
+        "createdAt": now(),
+        "status": "未读",
+    }
+    state.setdefault("messages", []).insert(0, message)
+    state.setdefault("workOrders", []).insert(
+        0,
+        {
+            "id": f"WO-{len(state.get('workOrders', [])) + 2101}",
+            "type": "客户咨询",
+            "title": payload.summary,
+            "owner": "预约对接组",
+            "related": message_id,
+            "deadline": "2 小时内",
+            "priority": "一般",
+            "status": "待处理",
+            "result": "",
+        },
+    )
+    append_log(state, "客户咨询", message_id, f"{payload.sender} 咨询：{payload.summary}", operator="customer")
+    save_state(state)
+    return message
 
 
 def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:

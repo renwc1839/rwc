@@ -151,7 +151,7 @@ class POIService:
         return poi
 
     async def _build_poi_payload(self, property_obj: Property) -> tuple[str, dict[str, list[dict[str, str]]]]:
-        district = property_obj.district or "工业园区"
+        district = property_obj.district or ""
 
         try:
             amap = AmapGeocodingService()
@@ -164,9 +164,12 @@ class POIService:
         except Exception as exc:
             logger.warning("AMap nearby generation failed, using fallback: %s", exc)
 
-        mock = MOCK_POI.get(district, MOCK_POI["工业园区"])
-        summary = mock["summary"]
-        categories = mock["categories"]
+        if district in MOCK_POI:
+            mock = MOCK_POI[district]
+            summary = mock["summary"]
+            categories = mock["categories"]
+        else:
+            summary, categories = self._generic_fallback_poi(property_obj)
 
         if self.client:
             try:
@@ -291,12 +294,51 @@ class POIService:
         except ValueError:
             return None
 
+    @staticmethod
+    def _is_stale_mock_poi(property_obj: Property, poi: PropertyPOI) -> bool:
+        district = property_obj.district or ""
+        content = poi.content or ""
+        return district not in MOCK_POI and "苏州" in content
+
+    @staticmethod
+    def _generic_fallback_poi(property_obj: Property) -> tuple[str, dict[str, list[dict[str, str]]]]:
+        district = property_obj.district or "该区域"
+        title = property_obj.title or "该房源"
+        is_overseas = not any(city in district for city in ["苏州", "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "武汉", "重庆"])
+        if is_overseas:
+            categories = {
+                "交通": [
+                    {"name": "公共交通站点", "distance": "步行可达"},
+                    {"name": "校园/市中心通勤线路", "distance": "需实地确认"},
+                ],
+                "生活": [
+                    {"name": "超市与便利店", "distance": "周边生活圈"},
+                    {"name": "咖啡馆与餐饮", "distance": "周边生活圈"},
+                ],
+                "学习": [
+                    {"name": "大学/图书馆通勤区域", "distance": "需顾问确认"},
+                    {"name": "自习与公共空间", "distance": "周边配套"},
+                ],
+            }
+            summary = f"{title}位于{district}，适合留学和通勤居住。周边交通、超市、餐饮与学习配套需以实地顾问确认为准，建议预约看房或联系后台顾问核对最新入住条件。"
+        else:
+            categories = {
+                "交通": [{"name": "公共交通站点", "distance": "周边可达"}],
+                "生活": [{"name": "超市、餐饮与生活服务", "distance": "周边生活圈"}],
+                "配套": [{"name": "社区与物业服务", "distance": "需实地确认"}],
+            }
+            summary = f"{title}位于{district}，周边生活与交通配套待顾问进一步核实。建议提交咨询或预约看房，确认最新房态、入住时间与费用明细。"
+        return summary, categories
+
     async def get_or_generate_poi(self, property_id: int) -> PropertyPOI | None:
         result = await self.session.execute(
             select(PropertyPOI).where(PropertyPOI.property_id == property_id)
         )
         poi = result.scalar_one_or_none()
         if poi:
+            prop = await self.session.get(Property, property_id)
+            if prop and self._is_stale_mock_poi(prop, poi):
+                return await self.generate_poi_for_property(prop, force=True)
             return poi
         prop = await self.session.get(Property, property_id)
         if not prop:

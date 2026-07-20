@@ -114,9 +114,12 @@
           <div class="featured-info">
             <div class="featured-header">
               <h3 class="featured-title" @click="goDetail(p.id)">{{ p.title }}</h3>
-              <span v-if="p.similarity != null" class="featured-match">
-                AI匹配 {{ (p.similarity * 100).toFixed(0) }}%
-              </span>
+              <div class="featured-badges">
+                <el-tag size="small" :type="statusTagType(p.status)" effect="plain">{{ statusLabels[p.status] }}</el-tag>
+                <span v-if="p.similarity != null" class="featured-match">
+                  AI匹配 {{ (p.similarity * 100).toFixed(0) }}%
+                </span>
+              </div>
             </div>
 
             <div class="featured-tags">
@@ -126,11 +129,18 @@
             </div>
 
             <p class="featured-address">{{ p.address }}</p>
+            <p class="featured-desc">{{ p.description || '暂无房源描述，联系顾问补充详细入住条件。' }}</p>
 
             <div class="featured-footer">
-              <div class="featured-price">
-                <span class="price-num">¥{{ p.price_monthly }}</span>
-                <span class="price-unit">/月</span>
+              <div>
+                <div class="featured-price">
+                  <span class="price-num">¥{{ p.price_monthly }}</span>
+                  <span class="price-unit">/月</span>
+                </div>
+                <div class="featured-fees">
+                  <span>押金 ¥{{ p.deposit_amount || p.price_monthly }}</span>
+                  <span v-if="p.service_fee_rate">服务费 {{ (p.service_fee_rate * 100).toFixed(0) }}%</span>
+                </div>
               </div>
               <div class="featured-actions">
                 <el-button size="small" text type="primary" @click="goDetail(p.id)">
@@ -255,6 +265,17 @@ const typeLabels: Record<PropertyType, string> = {
   house: '别墅',
   studio: '单间',
   shared: '合租',
+}
+
+const statusLabels = {
+  available: '可租',
+  rented: '已租',
+  maintenance: '维护中',
+  offline: '已下架',
+}
+
+function statusTagType(status: Property['status']) {
+  return ({ available: 'success', rented: 'warning', maintenance: 'info', offline: 'danger' }[status] || 'info') as 'success' | 'warning' | 'info' | 'danger'
 }
 
 // Booking dialog
@@ -637,6 +658,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 8px;
+  gap: 12px;
 }
 
 .featured-title {
@@ -652,7 +674,7 @@ onMounted(() => {
 }
 
 .featured-match {
-  background: linear-gradient(135deg, #67c23a, #85ce61);
+  background: #16a34a;
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -661,10 +683,18 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+.featured-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .featured-tags {
   display: flex;
   gap: 6px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
 }
 
 .featured-address {
@@ -674,6 +704,17 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.featured-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .featured-footer {
@@ -687,6 +728,15 @@ onMounted(() => {
   display: flex;
   align-items: baseline;
   gap: 2px;
+}
+
+.featured-fees {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .price-num {

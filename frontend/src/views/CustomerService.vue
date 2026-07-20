@@ -94,6 +94,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Headset, Loading, UserFilled } from '@element-plus/icons-vue'
 import { chatService } from '@/services/chat'
@@ -102,6 +103,7 @@ import type { ChatSession, ChatMessage } from '@/types/chat'
 
 // ── 状态 ──
 const sessions = ref<ChatSession[]>([])
+const route = useRoute()
 const activeSessionId = ref<number | null>(null)
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
@@ -277,6 +279,9 @@ async function handleSend() {
 
 // ── 生命周期 ──
 onMounted(async () => {
+  if (typeof route.query.property === 'string' && route.query.property) {
+    inputText.value = `我想咨询房源「${route.query.property}」的看房和入住条件。`
+  }
   await loadSessions()
   await ensureSession()
   await loadHistory()

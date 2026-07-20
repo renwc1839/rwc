@@ -63,9 +63,24 @@
               · 服务费 {{ (property.service_fee_rate * 100).toFixed(0) }}%
             </span>
           </div>
-          <el-button type="primary" size="large" round @click="showBookingDialog = true">
-            预约看房
-          </el-button>
+          <div class="price-actions">
+            <el-button size="large" round @click="openAdvisorDialog">联系顾问</el-button>
+            <el-button type="primary" size="large" round @click="showBookingDialog = true">
+              预约看房
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+
+      <el-card shadow="never" class="contact-card">
+        <div class="contact-copy">
+          <strong>需要人工对接？</strong>
+          <span>联系顾问会同步到后台消息中心，由预约对接人员跟进；也可以提交投诉或进入 AI 客服自助咨询。</span>
+        </div>
+        <div class="contact-actions">
+          <el-button type="primary" @click="openAdvisorDialog">联系后台顾问</el-button>
+          <el-button @click="goAiCustomerService">AI 客服咨询</el-button>
+          <el-button text type="warning" @click="goComplaint">提交投诉</el-button>
         </div>
       </el-card>
 
@@ -242,9 +257,12 @@
     <!-- Bottom Fixed Bar -->
     <div class="bottom-bar" v-if="property">
       <el-button size="large" @click="$router.back()">返回搜索列表</el-button>
-      <el-button type="primary" size="large" round @click="showBookingDialog = true">
-        立即支付押金预订
-      </el-button>
+      <div class="bottom-actions">
+        <el-button size="large" @click="openAdvisorDialog">联系顾问</el-button>
+        <el-button type="primary" size="large" round @click="showBookingDialog = true">
+          立即预约看房
+        </el-button>
+      </div>
     </div>
 
     <!-- Booking Date Dialog -->
@@ -255,11 +273,39 @@
       :property-price="property?.price_monthly"
       @confirm="handleBookingConfirm"
     />
+
+    <el-dialog v-model="showAdvisorDialog" title="联系后台顾问" width="520px">
+      <el-form label-position="top">
+        <el-form-item label="咨询房源">
+          <el-input :model-value="property?.title || ''" disabled />
+        </el-form-item>
+        <el-form-item label="姓名">
+          <el-input v-model="advisorForm.sender" placeholder="请输入姓名或称呼" />
+        </el-form-item>
+        <el-form-item label="联系方式">
+          <el-input v-model="advisorForm.contact" placeholder="手机号、邮箱或微信号" />
+        </el-form-item>
+        <el-form-item label="咨询内容">
+          <el-input
+            v-model="advisorForm.summary"
+            type="textarea"
+            :rows="4"
+            maxlength="500"
+            show-word-limit
+            placeholder="例如：想确认入住时间、押金规则、能否视频看房"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAdvisorDialog = false">取消</el-button>
+        <el-button type="primary" :loading="contactSubmitting" @click="submitAdvisorContact">提交给后台</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted, watch } from 'vue'
+import { ref, computed, onUnmounted, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Star, Share } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -267,6 +313,8 @@ import { usePropertyStore } from '@/stores/property'
 import { useAuthStore } from '@/stores/auth'
 import { propertyService, type PropertyPOI } from '@/services/property'
 import { favoriteService } from '@/services/favorite'
+import { browsingHistoryService } from '@/services/browsingHistory'
+import { adminPortalService } from '@/services/adminPortal'
 import { storeToRefs } from 'pinia'
 import PropertyCard from '@/components/PropertyCard.vue'
 import BookingDateDialog from '@/components/BookingDateDialog.vue'
@@ -364,6 +412,13 @@ const similarProperties = ref<Property[]>([])
 
 // Booking dialog
 const showBookingDialog = ref(false)
+const showAdvisorDialog = ref(false)
+const contactSubmitting = ref(false)
+const advisorForm = reactive({
+  sender: '',
+  contact: '',
+  summary: '',
+})
 
 // Favorites
 const isFavorited = ref(false)
@@ -413,6 +468,58 @@ function handleBookingConfirm(data: { propertyId: number; date: string; slot: st
   router.push({
     path: '/booking/confirm',
     query: { property_id: String(data.propertyId), date: data.date, slot: data.slot },
+  })
+}
+
+function openAdvisorDialog() {
+  if (!property.value) return
+  advisorForm.sender = authStore.user?.username || ''
+  advisorForm.contact = authStore.user?.phone || authStore.user?.email || ''
+  advisorForm.summary = `我想咨询「${property.value.title}」的看房安排和入住条件。`
+  showAdvisorDialog.value = true
+}
+
+async function submitAdvisorContact() {
+  if (!property.value) return
+  if (!advisorForm.sender.trim()) {
+    ElMessage.error('请填写姓名或称呼')
+    return
+  }
+  if (!advisorForm.contact.trim()) {
+    ElMessage.error('请填写联系方式')
+    return
+  }
+  if (!advisorForm.summary.trim() || advisorForm.summary.trim().length < 3) {
+    ElMessage.error('请填写咨询内容')
+    return
+  }
+  contactSubmitting.value = true
+  try {
+    await adminPortalService.createCustomerMessage({
+      sender: advisorForm.sender.trim(),
+      contact: advisorForm.contact.trim(),
+      summary: advisorForm.summary.trim(),
+      property: `${property.value.title}｜${property.value.district}｜${property.value.address}`,
+      propertyId: property.value.id,
+      channel: '房源咨询',
+    })
+    ElMessage.success('已提交给后台顾问，可在消息中心跟进')
+    showAdvisorDialog.value = false
+  } finally {
+    contactSubmitting.value = false
+  }
+}
+
+function goAiCustomerService() {
+  router.push({ path: '/customer-service', query: { property: property.value?.title || '' } })
+}
+
+function goComplaint() {
+  router.push({
+    path: '/complaints/new',
+    query: {
+      property: property.value ? `${property.value.title}｜${property.value.address}` : '',
+    },
   })
 }
 
@@ -475,6 +582,7 @@ async function loadProperty(id: number) {
   try {
     await propertyStore.fetchById(id)
     if (property.value) {
+      browsingHistoryService.record(property.value, authStore.user?.id)
       loadPOI(property.value.id)
       loadSimilar()
       await checkFavoriteStatus()
@@ -611,6 +719,15 @@ onUnmounted(() => stopWatch())
   border-top: 1px solid var(--border-light);
 }
 
+.price-actions,
+.bottom-actions,
+.contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .price-value {
   font-size: 32px;
   font-weight: 700;
@@ -627,6 +744,36 @@ onUnmounted(() => stopWatch())
   font-size: 13px;
   color: var(--text-muted);
   margin-left: 8px;
+}
+
+.contact-card {
+  margin-bottom: 16px;
+  border-color: #fed7aa;
+  background: #fffaf5;
+}
+
+.contact-card :deep(.el-card__body) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.contact-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.contact-copy strong {
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.contact-copy span {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
 }
 
 /* ── Specs Grid ────────────────────── */
@@ -979,5 +1126,20 @@ onUnmounted(() => stopWatch())
   align-items: center;
   z-index: 50;
   box-shadow: 0 -2px 12px rgba(0,0,0,0.04);
+}
+
+@media (max-width: 900px) {
+  .price-row,
+  .contact-card :deep(.el-card__body),
+  .bottom-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .price-actions,
+  .bottom-actions,
+  .contact-actions {
+    width: 100%;
+  }
 }
 </style>

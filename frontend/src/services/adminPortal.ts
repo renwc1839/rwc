@@ -40,6 +40,15 @@ export interface ComplaintCreate {
   property?: string
 }
 
+export interface CustomerContactCreate {
+  sender: string
+  contact: string
+  summary: string
+  property?: string
+  propertyId?: number
+  channel?: string
+}
+
 export const adminPortalService = {
   getPublicOptions(): Promise<{ categories: string[]; cities: string[] }> {
     return api.get('/admin-portal/public/options').then((r) => r.data)
@@ -55,6 +64,10 @@ export const adminPortalService = {
 
   createComplaint(data: ComplaintCreate): Promise<any> {
     return api.post('/admin-portal/complaints', data).then((r) => r.data)
+  },
+
+  createCustomerMessage(data: CustomerContactCreate): Promise<any> {
+    return api.post('/admin-portal/messages', data).then((r) => r.data)
   },
 
   updateComplaint(id: string, data: { status: string; result?: string }): Promise<any> {

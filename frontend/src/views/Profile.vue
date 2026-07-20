@@ -54,6 +54,13 @@
           <div class="stat-label">收藏</div>
         </div>
       </div>
+      <div class="stat-card" @click="activeTab = 'history'">
+        <span class="stat-icon">👀</span>
+        <div class="stat-info">
+          <div class="stat-num">{{ browsingHistory.length }}</div>
+          <div class="stat-label">浏览历史</div>
+        </div>
+      </div>
     </div>
 
     <!-- ===== Tab 主体 ===== -->
@@ -143,7 +150,42 @@
           </div>
         </el-tab-pane>
 
-        <!-- Tab4: 我的账单（简化版） -->
+        <!-- Tab4: 浏览历史 -->
+        <el-tab-pane label="👀 浏览历史" name="history">
+          <div class="tab-toolbar">
+            <span class="toolbar-note">按最近浏览排序，最多保留 30 套房源</span>
+            <el-button v-if="browsingHistory.length > 0" size="small" type="danger" plain @click="clearBrowsingHistory">清空历史</el-button>
+          </div>
+          <el-empty v-if="browsingHistory.length === 0" description="还没有浏览记录，去看看合适的房源吧">
+            <el-button type="primary" @click="$router.push('/search')">去找房</el-button>
+          </el-empty>
+          <div v-else class="history-list">
+            <div v-for="item in browsingHistory" :key="item.id" class="history-card">
+              <div class="history-cover" @click="router.push(`/property/${item.id}`)">
+                <img v-if="item.primary_image_url" :src="item.primary_image_url" :alt="item.title" />
+                <span v-else>暂无图片</span>
+              </div>
+              <div class="history-main">
+                <div class="history-title-row">
+                  <span class="history-title" @click="router.push(`/property/${item.id}`)">{{ item.title }}</span>
+                  <el-tag size="small" type="info">{{ formatViewedAt(item.viewed_at) }}</el-tag>
+                </div>
+                <div class="history-address">{{ item.district }} · {{ item.address }}</div>
+                <div class="history-meta">
+                  <strong>¥{{ item.price_monthly }}/月</strong>
+                  <span>{{ item.bedrooms }}室{{ item.bathrooms }}卫</span>
+                  <span v-if="item.area_sqm">{{ item.area_sqm }}㎡</span>
+                </div>
+              </div>
+              <div class="history-actions">
+                <el-button size="small" type="primary" @click="router.push(`/property/${item.id}`)">继续查看</el-button>
+                <el-button size="small" text type="danger" @click="removeBrowsingHistory(item.id)">移除</el-button>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- Tab5: 我的账单（简化版） -->
         <el-tab-pane label="💳 我的账单" name="bills">
           <div class="tab-toolbar">
             <el-radio-group v-model="billTab" size="small">
@@ -344,6 +386,7 @@ import { storeToRefs } from 'pinia'
 import PropertyCard from '@/components/PropertyCard.vue'
 import { favoriteService } from '@/services/favorite'
 import { repairService, type Repair } from '@/services/repair'
+import { browsingHistoryService, type BrowsingHistoryItem } from '@/services/browsingHistory'
 import type { Booking } from '@/types/booking'
 import type { Property } from '@/types/property'
 
@@ -362,6 +405,7 @@ const billTab = ref('unpaid')
 
 const bookings = ref<Booking[]>([])
 const favorites = ref<Property[]>([])
+const browsingHistory = ref<BrowsingHistoryItem[]>([])
 const repairs = ref<Repair[]>([])
 const repairForm = ref({ property: '', category: '', desc: '' })
 const chats = ref([
@@ -411,6 +455,14 @@ const paidOrders = computed(() => bookings.value
   .map(b => ({ bookingId: b.id, propertyId: b.property_id, amount: b.deposit_amount || 0, payTime: b.updated_at ? new Date(b.updated_at).toLocaleDateString('zh-CN') : '' })))
 
 // ── Actions ──
+function currentHistoryUserId() {
+  return user.value?.id || authStore.user?.id || null
+}
+
+function refreshBrowsingHistory() {
+  browsingHistory.value = browsingHistoryService.list(currentHistoryUserId())
+}
+
 async function fetchAll() {
   pageLoading.value = true
   try { bookings.value = (await bookingService.list()).filter(b => b.deposit_status !== 'paid' && b.deposit_status !== 'confirmed') }
@@ -427,6 +479,7 @@ async function fetchAll() {
       favorites.value = []
     }
   } catch { favorites.value = [] }
+  refreshBrowsingHistory()
   try { repairs.value = await repairService.list() }
   catch { repairs.value = [] }
   pageLoading.value = false
@@ -445,6 +498,18 @@ async function downloadContract(row: any) {
   catch { ElMessage.info('下载功能接入中') }
 }
 function openBookingDialog(p: Property) { router.push({ path: '/booking/confirm', query: { property_id: String(p.id) } }) }
+function removeBrowsingHistory(propertyId: number) {
+  browsingHistory.value = browsingHistoryService.remove(propertyId, currentHistoryUserId())
+  ElMessage.success('已从浏览历史移除')
+}
+async function clearBrowsingHistory() {
+  try {
+    await ElMessageBox.confirm('确定清空全部浏览历史吗？', '清空浏览历史', { confirmButtonText: '清空', cancelButtonText: '取消', type: 'warning' })
+    browsingHistoryService.clear(currentHistoryUserId())
+    browsingHistory.value = []
+    ElMessage.success('浏览历史已清空')
+  } catch { /* cancelled */ }
+}
 function viewRepair(row: any) { ElMessage.info(`工单 ${row.id}：${row.status}`) }
 async function submitRepair() {
   if (!repairForm.value.property || !repairForm.value.category || !repairForm.value.desc.trim()) {
@@ -466,6 +531,16 @@ function bindWechat() { ElMessage.info('请用微信扫码绑定') }
 
 function maskPhone(p: string | null): string { return p && p.length >= 11 ? p.slice(0, 3) + '****' + p.slice(-4) : (p || '未设置') }
 function formatDate(d: string): string { return d ? new Date(d).toLocaleDateString('zh-CN') : '' }
+function formatViewedAt(d: string): string {
+  if (!d) return ''
+  const date = new Date(d)
+  const now = Date.now()
+  const diffMinutes = Math.floor((now - date.getTime()) / 60000)
+  if (diffMinutes < 1) return '刚刚看过'
+  if (diffMinutes < 60) return `${diffMinutes}分钟前`
+  if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)}小时前`
+  return date.toLocaleDateString('zh-CN')
+}
 
 // 每次进入个人中心都重新拉取数据
 authStore.fetchCurrentUser()
@@ -476,6 +551,7 @@ watch(() => route.path, () => {
     fetchAll()
   }
 })
+watch(() => user.value?.id, () => refreshBrowsingHistory())
 </script>
 
 <style scoped>
@@ -489,7 +565,7 @@ watch(() => route.path, () => {
 .user-contact { display: flex; gap: 16px; font-size: 13px; color: var(--text-muted); flex-wrap: wrap; }
 .user-actions { display: flex; gap: 10px; flex-shrink: 0; }
 
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
 .stat-card { background: var(--bg-white); border-radius: var(--radius); border: 1px solid var(--border); padding: 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s; }
 .stat-card:hover { border-color: var(--primary); box-shadow: var(--shadow); transform: translateY(-2px); }
 .stat-icon { font-size: 24px; }
@@ -499,10 +575,24 @@ watch(() => route.path, () => {
 .tabs-card { border-radius: var(--radius) !important; }
 .profile-tabs :deep(.el-tabs__item) { font-size: 14px; }
 .tab-toolbar { margin-bottom: 16px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.toolbar-note { font-size: 13px; color: var(--text-muted); line-height: 28px; }
 .link-text { color: var(--primary); cursor: pointer; font-weight: 500; }
 .link-text:hover { text-decoration: underline; }
 
 .fav-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+.history-list { display: flex; flex-direction: column; gap: 12px; }
+.history-card { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; }
+.history-cover { width: 140px; height: 96px; border-radius: 8px; overflow: hidden; background: var(--bg-light); display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 13px; cursor: pointer; }
+.history-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.history-main { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.history-title-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.history-title { font-size: 16px; font-weight: 700; color: var(--text-primary); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-title:hover { color: var(--primary); }
+.history-address { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-meta { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--text-secondary); flex-wrap: wrap; }
+.history-meta strong { color: var(--danger); font-size: 16px; }
+.history-actions { display: flex; align-items: center; gap: 8px; }
 
 .bill-list { display: flex; flex-direction: column; gap: 10px; }
 .bill-card { display: flex; justify-content: space-between; align-items: center; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; }

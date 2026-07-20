@@ -449,9 +449,18 @@ async def seed_properties(dry_run: bool = False):
             print(f"[DRY RUN] 将插入 {len(SEED_PROPERTIES)} 条房源")
             return
 
-        # 轮询分配房东
+        existing_result = await session.execute(select(Property.title, Property.address))
+        existing_keys = {(title, address) for title, address in existing_result.all()}
+
+        # 轮询分配房东；已存在的房源跳过，便于本地重复补数。
         created = 0
+        skipped = 0
         for i, pdata in enumerate(SEED_PROPERTIES):
+            key = (pdata["title"], pdata["address"])
+            if key in existing_keys:
+                skipped += 1
+                print(f"  [SKIP] {pdata['title'][:40]}...")
+                continue
             landlord_id = landlord_ids[i % len(landlord_ids)]
             prop = Property(
                 landlord_id=landlord_id,
@@ -460,10 +469,11 @@ async def seed_properties(dry_run: bool = False):
             )
             session.add(prop)
             created += 1
+            existing_keys.add(key)
             print(f"  [{created}] OK {pdata['title'][:40]}...")
 
         await session.commit()
-        print(f"\n[DONE] 成功插入 {created} 条全球留学生房源！")
+        print(f"\n[DONE] 成功插入 {created} 条全球留学生房源，跳过 {skipped} 条已存在房源。")
 
 
 if __name__ == "__main__":

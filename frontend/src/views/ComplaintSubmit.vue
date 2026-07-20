@@ -5,7 +5,7 @@
         <p>平台投诉与纠纷入口</p>
         <h1>提交投诉</h1>
       </div>
-      <el-tag type="warning" effect="plain">提交后进入超级管理员仲裁中心</el-tag>
+      <el-tag type="warning" effect="plain">提交后进入后台投诉处理中心</el-tag>
     </section>
 
     <section class="complaint-layout">
@@ -67,7 +67,7 @@
         <h2>处理流程</h2>
         <ol>
           <li>客户提交投诉信息</li>
-          <li>系统同步到仲裁中心</li>
+          <li>系统同步到后台投诉处理中心</li>
           <li>管理员指派核实或直接处理</li>
           <li>结案结果写入不可删除日志</li>
         </ol>
@@ -84,11 +84,13 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { adminPortalService, type ComplaintCreate } from '@/services/adminPortal'
 
 const formRef = ref<FormInstance>()
+const route = useRoute()
 const submitting = ref(false)
 const categories = ref(['房源问题', '服务问题', '押金问题', '合同问题', '其他'])
 const cities = ref(['伦敦', '纽约', '悉尼'])
@@ -114,6 +116,9 @@ const rules: FormRules = {
 }
 
 onMounted(async () => {
+  if (typeof route.query.property === 'string') {
+    form.property = route.query.property
+  }
   try {
     const options = await adminPortalService.getPublicOptions()
     categories.value = options.categories

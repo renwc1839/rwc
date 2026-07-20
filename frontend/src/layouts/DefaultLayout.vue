@@ -109,6 +109,10 @@
               <el-icon><Location /></el-icon>
               <span>地图找房</span>
             </el-menu-item>
+            <el-menu-item index="/customer-service">
+              <el-icon><Headset /></el-icon>
+              <span>联系客服</span>
+            </el-menu-item>
             <el-menu-item index="/complaints/new">
               <el-icon><Tickets /></el-icon>
               <span>提交投诉</span>
@@ -191,7 +195,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   MagicStick, Search, HomeFilled, User, UserFilled, ArrowDown, Setting, SwitchButton,
-  Plus, List, Bell, DataAnalysis, Tickets, OfficeBuilding, Location,
+  Plus, List, Bell, DataAnalysis, Tickets, OfficeBuilding, Location, Headset,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { notificationService } from '@/services/notification'
