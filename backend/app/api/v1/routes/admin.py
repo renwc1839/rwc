@@ -1,7 +1,11 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, get_db_session, require_admin
+from app.models.booking import Booking
+from app.models.property import Property
 from app.models.user import User, UserRole
 from app.schemas.user import UserRead
 from app.services.audit_service import AuditService
@@ -11,6 +15,68 @@ from app.services.stats_service import StatsService
 from app.services.user_service import UserService
 
 router = APIRouter()
+
+
+def mask_email(value: str | None) -> str | None:
+    if not value or "@" not in value:
+        return value
+    name, domain = value.split("@", 1)
+    return f"{name[:2] if len(name) > 1 else name[:1]}***@{domain}"
+
+
+def mask_phone(value: str | None) -> str | None:
+    if not value:
+        return value
+    if len(value) <= 4:
+        return "***"
+    return f"{value[:3]}****{value[-4:]}"
+
+
+def role_label(role: UserRole | str) -> str:
+    value = getattr(role, "value", role)
+    labels = {
+        "tenant": "租客",
+        "landlord": "房源管理人员",
+        "appointment_staff": "预约对接人员",
+        "property_manager": "房源管理人员",
+        "repair_worker": "维修工",
+        "admin": "超级管理员",
+    }
+    return labels.get(str(value), str(value))
+
+
+def enum_value(value) -> str:
+    return getattr(value, "value", value)
+
+
+def property_summary(prop: Property) -> dict:
+    return {
+        "id": prop.id,
+        "title": prop.title,
+        "address": prop.address,
+        "district": prop.district,
+        "price_monthly": float(prop.price_monthly),
+        "status": enum_value(prop.status),
+        "property_manager_id": prop.property_manager_id,
+        "created_at": prop.created_at.isoformat(),
+    }
+
+
+def booking_summary(booking: Booking) -> dict:
+    prop = booking.property
+    return {
+        "id": booking.id,
+        "property_id": booking.property_id,
+        "property_title": prop.title if prop else f"房源 #{booking.property_id}",
+        "room_number": booking.room_number,
+        "lease_start": booking.lease_start,
+        "lease_end": booking.lease_end,
+        "status": enum_value(booking.status),
+        "contract_status": booking.contract_status,
+        "deposit_status": booking.deposit_status,
+        "scheduled_date": booking.scheduled_date,
+        "created_at": booking.created_at.isoformat(),
+    }
 
 
 @router.get("/stats")
@@ -68,6 +134,97 @@ async def list_users(
     return await UserService(session).list(skip=skip, limit=limit, role=user_role)
 
 
+@router.get("/users/{user_id}/detail")
+async def get_user_detail(
+    user_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(require_admin),
+) -> dict:
+    user = await UserService(session).get(user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    tenant_bookings = list(
+        (
+            await session.scalars(
+                select(Booking)
+                .options(selectinload(Booking.property))
+                .where(Booking.tenant_id == user_id)
+                .order_by(Booking.created_at.desc())
+                .limit(20)
+            )
+        ).all()
+    )
+    handled_bookings = list(
+        (
+            await session.scalars(
+                select(Booking)
+                .options(selectinload(Booking.property))
+                .where(Booking.landlord_id == user_id)
+                .order_by(Booking.created_at.desc())
+                .limit(20)
+            )
+        ).all()
+    )
+    managed_properties = list(
+        (
+            await session.scalars(
+                select(Property)
+                .where(
+                    or_(
+                        Property.property_manager_id == user_id,
+                        (Property.property_manager_id.is_(None) & (Property.landlord_id == user_id)),
+                    )
+                )
+                .order_by(Property.created_at.desc())
+                .limit(20)
+            )
+        ).all()
+    )
+
+    from app.api.v1.routes.admin_portal import load_state
+
+    state = load_state()
+    username = user.username
+    appointments = [
+        item for item in state.get("appointments", [])
+        if item.get("assignee") == username or item.get("customer") == username
+    ][:20]
+    repairs = [
+        item for item in state.get("repairs", [])
+        if item.get("assignee") == username or item.get("tenant") == username or item.get("owner") == username
+    ][:20]
+    work_orders = [
+        item for item in state.get("workOrders", [])
+        if item.get("owner") == username or item.get("customer") == username or item.get("related") in {r.get("id") for r in repairs}
+    ][:20]
+    messages = [
+        item for item in state.get("messages", [])
+        if item.get("assignee") == username or item.get("customer") == username or item.get("target") == username
+    ][:20]
+
+    return {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": mask_email(user.email),
+            "phone": mask_phone(user.phone),
+            "role": enum_value(user.role),
+            "role_label": role_label(user.role),
+            "status": enum_value(user.status),
+            "created_at": user.created_at.isoformat(),
+            "updated_at": user.updated_at.isoformat(),
+        },
+        "tenant_bookings": [booking_summary(item) for item in tenant_bookings],
+        "handled_bookings": [booking_summary(item) for item in handled_bookings],
+        "managed_properties": [property_summary(item) for item in managed_properties],
+        "appointments": appointments,
+        "repairs": repairs,
+        "work_orders": work_orders,
+        "messages": messages,
+    }
+
+
 @router.patch("/properties/{property_id}/status")
 async def moderate_property(
     property_id: int,
@@ -107,10 +264,12 @@ async def update_user_role(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_admin),
 ) -> UserRead:
-    if new_role not in {"tenant", "landlord", "appointment_staff", "property_manager", "repair_worker", "admin"}:
+    if new_role == "landlord":
+        new_role = "property_manager"
+    if new_role not in {"tenant", "appointment_staff", "property_manager", "repair_worker", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role. Must be: tenant, landlord, appointment_staff, property_manager, repair_worker, or admin",
+            detail="Invalid role. Must be: tenant, appointment_staff, property_manager, repair_worker, or admin",
         )
 
     from app.schemas.user import UserUpdate

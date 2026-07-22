@@ -21,9 +21,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { notificationService } from '@/services/notification'
+import { useAuthStore } from '@/stores/auth'
 import type { Notification } from '@/types/booking'
 
+const router = useRouter()
+const authStore = useAuthStore()
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
 
@@ -52,7 +56,13 @@ async function handleMarkAllRead() {
   notifications.value.forEach((n) => (n.is_read = true))
 }
 
-onMounted(fetchNotifications)
+onMounted(() => {
+  if (authStore.canUseWorkspace) {
+    router.replace({ path: '/workspace', query: { tab: 'messages' } })
+    return
+  }
+  fetchNotifications()
+})
 </script>
 
 <style scoped>

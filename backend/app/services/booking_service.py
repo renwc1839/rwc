@@ -8,6 +8,34 @@ from app.schemas.booking import BookingCreate
 from app.services.notification_service import NotificationService
 
 
+ORDER_PROGRESS_LABELS = [
+    ("submitted", "提交申请"),
+    ("profile_review", "资料审核"),
+    ("tenant_confirmed", "租客确认"),
+    ("landlord_confirmed", "管理员确认"),
+    ("contract_ready", "合同签署"),
+    ("deposit_paid", "支付定金"),
+    ("completed", "完成入住"),
+]
+
+
+def build_order_progress(active_key: str = "submitted") -> list[dict]:
+    keys = [key for key, _ in ORDER_PROGRESS_LABELS]
+    try:
+        active_index = keys.index(active_key)
+    except ValueError:
+        active_index = 0
+    return [
+        {
+            "key": key,
+            "label": label,
+            "done": index <= active_index,
+            "active": index == active_index,
+        }
+        for index, (key, label) in enumerate(ORDER_PROGRESS_LABELS)
+    ]
+
+
 class BookingService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -47,6 +75,12 @@ class BookingService:
             deposit_amount=deposit_amount,
             service_fee=service_fee,
             deposit_status="unpaid",
+            tenant_profile=booking_in.tenant_profile or {},
+            progress_steps=build_order_progress("submitted"),
+            room_number=booking_in.room_number,
+            lease_start=booking_in.lease_start,
+            lease_end=booking_in.lease_end,
+            contract_status="not_ready",
         )
         self.session.add(booking)
         await self.session.commit()
@@ -139,6 +173,40 @@ class BookingService:
                     channels=["wechat", "email"],
                 )
 
+        return booking
+
+    async def update_progress(self, booking_id: int, update_in) -> Booking | None:
+        booking = await self.session.get(Booking, booking_id)
+        if not booking:
+            return None
+
+        if update_in.status is not None:
+            booking.status = update_in.status
+        if update_in.deposit_status is not None:
+            booking.deposit_status = update_in.deposit_status
+        if update_in.payment_transaction_id is not None:
+            booking.payment_transaction_id = update_in.payment_transaction_id
+        if update_in.progress_key:
+            booking.progress_steps = build_order_progress(update_in.progress_key)
+            if update_in.progress_key in {"profile_review", "tenant_confirmed", "landlord_confirmed", "contract_ready"}:
+                booking.status = BookingStatus.approved
+            if update_in.progress_key == "completed":
+                booking.status = BookingStatus.completed
+            if update_in.progress_key in {"contract_ready", "deposit_paid", "completed"}:
+                booking.contract_status = "pending_signature" if update_in.progress_key == "contract_ready" else "signed"
+        if update_in.room_number is not None:
+            booking.room_number = update_in.room_number
+        if update_in.lease_start is not None:
+            booking.lease_start = update_in.lease_start
+        if update_in.lease_end is not None:
+            booking.lease_end = update_in.lease_end
+        if update_in.contract_status is not None:
+            booking.contract_status = update_in.contract_status
+        if update_in.admin_note is not None:
+            booking.admin_note = update_in.admin_note
+
+        await self.session.commit()
+        await self.session.refresh(booking)
         return booking
 
     async def list_by_tenant(self, tenant_id: int) -> list[Booking]:

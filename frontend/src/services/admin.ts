@@ -1,6 +1,6 @@
 ﻿import api from './api'
 import type { AdminStats, AuditLog, EmbeddingStats, ImportResult, ImportTask, ImportTaskDetail } from '@/types/admin'
-import type { User } from '@/types/user'
+import type { AdminUserDetail, User } from '@/types/user'
 
 export const adminService = {
   getStats(): Promise<AdminStats> {
@@ -34,6 +34,10 @@ export const adminService = {
     return api.patch(`/admin/users/${userId}/role`, null, {
       params: { new_role },
     }).then((r) => r.data)
+  },
+
+  getUserDetail(userId: number): Promise<AdminUserDetail> {
+    return api.get(`/admin/users/${userId}/detail`).then((r) => r.data)
   },
 
   getEmbeddingStats(): Promise<EmbeddingStats> {

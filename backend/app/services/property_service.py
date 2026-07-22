@@ -6,7 +6,7 @@ import threading
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.property import Property
@@ -87,7 +87,12 @@ class PropertyService:
         if status:
             stmt = stmt.where(Property.status == status)
         if property_manager_id is not None:
-            stmt = stmt.where(Property.property_manager_id == property_manager_id)
+            stmt = stmt.where(
+                or_(
+                    Property.property_manager_id == property_manager_id,
+                    (Property.property_manager_id.is_(None) & (Property.landlord_id == property_manager_id)),
+                )
+            )
         result = await self.session.scalars(stmt)
         return list(result)
 

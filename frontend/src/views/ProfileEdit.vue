@@ -94,7 +94,7 @@ const notifSettings = reactive({ booking: true, contract: true, newListing: true
 
 const roleLabels: Record<UserRole, string> = {
   tenant: '租客',
-  landlord: '房东',
+  landlord: '房源管理人员',
   appointment_staff: '预约对接人员',
   property_manager: '房源管理人员',
   repair_worker: '维修工',

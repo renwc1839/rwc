@@ -33,7 +33,7 @@
           <el-tag v-else type="info" size="small" effect="plain">租客</el-tag>
 
           <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
-            <el-button :icon="Bell" circle @click="router.push('/notifications')" />
+            <el-button :icon="Bell" circle @click="openMessages" />
           </el-badge>
 
           <el-dropdown trigger="click">
@@ -145,7 +145,7 @@
               <el-icon><Tickets /></el-icon>
               <span>预约管理</span>
             </el-menu-item>
-            <el-menu-item index="/notifications">
+            <el-menu-item :index="messageMenuIndex">
               <el-icon><Bell /></el-icon>
               <span>消息通知</span>
             </el-menu-item>
@@ -191,7 +191,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   MagicStick, Search, HomeFilled, User, UserFilled, ArrowDown, Setting, SwitchButton,
@@ -199,6 +199,8 @@ import {
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { notificationService } from '@/services/notification'
+import { adminPortalService } from '@/services/adminPortal'
+import { ElNotification } from 'element-plus'
 import GlobalFooter from '@/components/GlobalFooter.vue'
 
 const router = useRouter()
@@ -207,10 +209,13 @@ const authStore = useAuthStore()
 
 const searchQuery = ref('')
 const unreadCount = ref(0)
+const lastNotifiedUnread = ref(0)
+const unreadPollTimer = ref<number | null>(null)
 
 const activeMenu = computed(() => {
   const path = route.path
   if (path.startsWith('/workspace') && route.query.tab === 'bookings') return '/workspace?tab=bookings'
+  if (path.startsWith('/workspace') && route.query.tab === 'messages') return messageMenuIndex.value
   if (path.startsWith('/admin')) return path
   if (path.startsWith('/notifications')) return '/notifications'
   if (path.startsWith('/property/')) {
@@ -223,15 +228,48 @@ const activeMenu = computed(() => {
   return path
 })
 
+const messageMenuIndex = computed(() => authStore.canUseWorkspace ? '/workspace?tab=messages' : '/notifications')
+
 function handleSearch() {
   if (searchQuery.value.trim()) {
     router.push({ name: 'search', query: { q: searchQuery.value.trim() } })
   }
 }
 
+function openMessages() {
+  router.push(messageMenuIndex.value)
+}
+
 async function fetchUnreadCount() {
-  if (!authStore.isLoggedIn) return
+  if (!authStore.isLoggedIn) {
+    unreadCount.value = 0
+    lastNotifiedUnread.value = 0
+    return
+  }
   try {
+    if (authStore.canUseWorkspace) {
+      const state = await adminPortalService.getChatState()
+      const nextUnread = state.unreadTotal || 0
+      if (
+        nextUnread > unreadCount.value
+        && nextUnread > lastNotifiedUnread.value
+        && !(route.path === '/workspace' && route.query.tab === 'messages')
+      ) {
+        const unreadConversation = (state.conversations || []).find((item: any) => item.unreadCount)
+        ElNotification({
+          title: '有新的未读消息',
+          message: unreadConversation?.contact?.name
+            ? `${unreadConversation.contact.name} 发来 ${unreadConversation.unreadCount} 条未读`
+            : `当前有 ${nextUnread} 条未读消息`,
+          type: 'info',
+          duration: 3500,
+        })
+        lastNotifiedUnread.value = nextUnread
+      }
+      unreadCount.value = nextUnread
+      if (nextUnread === 0) lastNotifiedUnread.value = 0
+      return
+    }
     const resp = await notificationService.getUnreadCount()
     unreadCount.value = resp.count
   } catch {
@@ -239,7 +277,16 @@ async function fetchUnreadCount() {
   }
 }
 
-onMounted(fetchUnreadCount)
+onMounted(() => {
+  fetchUnreadCount()
+  unreadPollTimer.value = window.setInterval(fetchUnreadCount, 30000)
+})
+
+onUnmounted(() => {
+  if (unreadPollTimer.value) {
+    window.clearInterval(unreadPollTimer.value)
+  }
+})
 
 // 每次路由变化刷新未读数（从通知页回来时数字更新）
 watch(() => route.path, () => {

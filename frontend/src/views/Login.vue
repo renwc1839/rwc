@@ -7,7 +7,7 @@
         <span class="logo-text">AI全球公寓租赁</span>
       </div>
       <h2 class="auth-title">欢迎回来</h2>
-      <p class="auth-subtitle">{{ loginMode === 'staff' ? '工作人员入口，仅限平台后台人员使用' : '前台用户入口，适用于租客和房东账号' }}</p>
+      <p class="auth-subtitle">{{ loginMode === 'staff' ? '工作人员入口，仅限平台后台人员使用' : '前台用户入口，适用于租客账号' }}</p>
 
       <el-segmented
         v-model="loginMode"
@@ -91,8 +91,8 @@ const loginModeOptions = [
   { label: '工作人员', value: 'staff' },
 ]
 
-const staffRoles = ['admin', 'appointment_staff', 'property_manager', 'repair_worker']
-const userRoles = ['tenant', 'landlord']
+const staffRoles = ['admin', 'appointment_staff', 'property_manager', 'repair_worker', 'landlord']
+const userRoles = ['tenant']
 
 const form = reactive({
   username_or_email: '',

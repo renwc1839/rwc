@@ -24,7 +24,6 @@
         <el-form-item label="身份" prop="role">
           <el-radio-group v-model="form.role">
             <el-radio value="tenant">租客</el-radio>
-            <el-radio value="landlord">房东</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
@@ -59,7 +58,7 @@ const form = reactive({
   phone: '',
   password: '',
   confirmPassword: '',
-  role: 'tenant' as 'tenant' | 'landlord',
+  role: 'tenant' as 'tenant',
 })
 
 const validateConfirmPassword = (_rule: unknown, value: string, callback: (err?: Error) => void) => {
