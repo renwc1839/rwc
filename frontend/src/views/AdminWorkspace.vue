@@ -187,41 +187,98 @@
 
         <!-- Tab3: 租赁合约管理 -->
         <el-tab-pane v-if="canViewAdminTabs" label="📄 合约管理" name="contracts">
-          <div class="tab-toolbar">
-            <el-radio-group v-model="contractFilter" size="small">
-              <el-radio-button value="active">生效中 ({{ activeContractCount }})</el-radio-button>
-              <el-radio-button value="expiring">即将到期</el-radio-button>
-              <el-radio-button value="renewal">待续签</el-radio-button>
-              <el-radio-button value="deposit">待签约定金</el-radio-button>
-              <el-radio-button value="terminated">已解约</el-radio-button>
-            </el-radio-group>
+          <div class="contract-board-switch">
+            <el-segmented
+              v-model="contractBoard"
+              :options="[
+                { label: '合同管理', value: 'contracts' },
+                { label: '合同模板管理', value: 'templates' },
+              ]"
+            />
+          </div>
+
+          <template v-if="contractBoard === 'contracts'">
+            <div class="tab-toolbar">
+              <el-select v-model="contractFilter" size="small" class="category-select" placeholder="选择合同分类">
+                <el-option label="生效中" value="active" />
+                <el-option label="即将到期" value="expiring" />
+                <el-option label="待续签" value="renewal" />
+                <el-option label="待签约定金" value="deposit" />
+                <el-option label="已解约" value="terminated" />
+                <el-option label="全部合同" value="all" />
+              </el-select>
             <div>
               <el-button type="primary" size="small" @click="batchGenerateContracts">批量生成合同</el-button>
               <el-button size="small" @click="batchExportContracts">批量导出</el-button>
               <el-button size="small" type="warning" @click="batchRenewContracts">批量续租</el-button>
             </div>
           </div>
-          <el-table :data="filteredContracts" stripe>
-            <el-table-column label="合同编号" width="140" prop="id" />
-            <el-table-column label="房源" prop="property" min-width="160" />
-            <el-table-column label="租客" prop="tenant" width="100" />
-            <el-table-column label="租期" width="180">
-              <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
-            </el-table-column>
-            <el-table-column label="月租金" width="100" prop="rent" />
-            <el-table-column label="押金" width="90" prop="deposit" />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.status === '生效中' ? 'success' : 'warning'" size="small">{{ row.status }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="160">
-              <template #default="{ row }">
-                <el-button size="small" text type="primary" @click="viewContract(row)">查看</el-button>
-                <el-button size="small" text type="danger" @click="terminateContract(row)">解约</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+            <el-table :data="filteredContracts" stripe>
+              <el-table-column label="合同编号" width="140" prop="id" />
+              <el-table-column label="房源" prop="property" min-width="160" />
+              <el-table-column label="租客" prop="tenant" width="100" />
+              <el-table-column label="租期" width="180">
+                <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
+              </el-table-column>
+              <el-table-column label="月租金" width="100" prop="rent" />
+              <el-table-column label="押金" width="90" prop="deposit" />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === '生效中' ? 'success' : 'warning'" size="small">{{ row.status }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="160">
+                <template #default="{ row }">
+                  <el-button size="small" text type="primary" @click="viewContract(row)">查看</el-button>
+                  <el-button size="small" text type="danger" @click="terminateContract(row)">解约</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+
+          <template v-else>
+            <div class="contract-template-summary">
+              <div>
+                <strong>合同模板库</strong>
+                <span>按租赁场景维护模板，生成合同时从这里选择版本</span>
+              </div>
+              <el-button type="primary" size="small" @click="uploadContractTemplate">上传新模板</el-button>
+            </div>
+            <div class="tab-toolbar">
+              <el-select v-model="contractTemplateCategory" size="small" class="category-select" placeholder="选择模板分类">
+                <el-option label="租赁合同" value="lease" />
+                <el-option label="续租协议" value="renewal" />
+                <el-option label="定金协议" value="deposit" />
+                <el-option label="退租交接" value="checkout" />
+                <el-option label="全部模板" value="all" />
+              </el-select>
+              <div>
+                <el-button size="small" @click="previewSelectedTemplate">预览当前分类</el-button>
+                <el-button size="small" type="success" @click="applyTemplateCategory">设为生成默认</el-button>
+              </div>
+            </div>
+            <el-table :data="filteredContractTemplates" stripe>
+              <el-table-column label="模板名称" min-width="180" prop="name" />
+              <el-table-column label="分类" width="110" prop="categoryLabel" />
+              <el-table-column label="适用城市/国家" width="150" prop="scope" />
+              <el-table-column label="版本" width="90" prop="version" />
+              <el-table-column label="更新时间" width="130" prop="updatedAt" />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="220">
+                <template #default="{ row }">
+                  <el-button size="small" text type="primary" @click="previewContractTemplate(row)">预览</el-button>
+                  <el-button size="small" text @click="replaceContractTemplate(row)">替换文件</el-button>
+                  <el-button size="small" text :type="row.enabled ? 'danger' : 'success'" @click="toggleContractTemplate(row)">
+                    {{ row.enabled ? '停用' : '启用' }}
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
         </el-tab-pane>
 
         <!-- Tab4: 财务收支 -->
@@ -930,7 +987,9 @@ const statsCards = computed(() =>
 const activeTab = ref((route.query.tab as string) || 'properties')
 const propertyFilter = ref('all')
 const bookingFilter = ref('all')
+const contractBoard = ref<'contracts' | 'templates'>('contracts')
 const contractFilter = ref('active')
+const contractTemplateCategory = ref('lease')
 const financeTab = ref('deposit')
 const pushSettings = reactive({ sms: true, site: true, booking: true, rent: true, expire: true })
 
@@ -1127,6 +1186,63 @@ const filteredContracts = computed(() => {
   if (contractFilter.value === 'expiring') return contractRows.value.filter(c => c.status === '即将到期')
   if (contractFilter.value === 'deposit') return contractRows.value.filter(c => c.status !== '生效中')
   return contractRows.value
+})
+
+const contractTemplateRows = computed(() => [
+  {
+    id: 'TPL-LEASE-001',
+    name: '标准租赁合同模板',
+    category: 'lease',
+    categoryLabel: '租赁合同',
+    scope: '通用',
+    version: 'v1.4',
+    updatedAt: '2026-07-18',
+    enabled: true,
+  },
+  {
+    id: 'TPL-LEASE-UK',
+    name: '英国地区租赁合同',
+    category: 'lease',
+    categoryLabel: '租赁合同',
+    scope: '英国',
+    version: 'v1.2',
+    updatedAt: '2026-07-15',
+    enabled: true,
+  },
+  {
+    id: 'TPL-RENEW-001',
+    name: '续租补充协议',
+    category: 'renewal',
+    categoryLabel: '续租协议',
+    scope: '通用',
+    version: 'v1.1',
+    updatedAt: '2026-07-10',
+    enabled: true,
+  },
+  {
+    id: 'TPL-DEPOSIT-001',
+    name: '定金确认协议',
+    category: 'deposit',
+    categoryLabel: '定金协议',
+    scope: '通用',
+    version: 'v1.0',
+    updatedAt: '2026-07-08',
+    enabled: true,
+  },
+  {
+    id: 'TPL-CHECKOUT-001',
+    name: '退租交接确认单',
+    category: 'checkout',
+    categoryLabel: '退租交接',
+    scope: '通用',
+    version: 'v1.0',
+    updatedAt: '2026-07-05',
+    enabled: false,
+  },
+])
+const filteredContractTemplates = computed(() => {
+  if (contractTemplateCategory.value === 'all') return contractTemplateRows.value
+  return contractTemplateRows.value.filter((item) => item.category === contractTemplateCategory.value)
 })
 
 const financeData = computed(() => portalFinanceItems.value.map((item) => ({
@@ -1327,6 +1443,32 @@ async function batchExportContracts() {
 async function batchRenewContracts() {
   await recordWorkspaceAction('contract.renew', 'contracts', `批量发起 ${filteredContracts.value.length} 份续租`)
   ElMessage.success('续租任务已写入工作日志')
+}
+async function uploadContractTemplate() {
+  await recordWorkspaceAction('contract.template.upload', 'contract-templates', '进入合同模板上传流程')
+  ElMessage.success('模板上传动作已写入日志，后续可接入文件上传')
+}
+async function previewSelectedTemplate() {
+  const count = filteredContractTemplates.value.length
+  await recordWorkspaceAction('contract.template.preview_category', 'contract-templates', `预览当前模板分类，共 ${count} 个模板`)
+  ElMessage.success(`当前分类共 ${count} 个模板`)
+}
+async function applyTemplateCategory() {
+  const enabled = filteredContractTemplates.value.filter((item) => item.enabled)
+  await recordWorkspaceAction('contract.template.default', 'contract-templates', `设置 ${contractTemplateCategory.value} 分类为合同生成默认来源，可用模板 ${enabled.length} 个`)
+  ElMessage.success('已记录默认模板分类设置')
+}
+async function previewContractTemplate(row: any) {
+  await recordWorkspaceAction('contract.template.preview', row.id, `预览模板：${row.name}`)
+  ElMessage.success(`已打开模板预览：${row.name}`)
+}
+async function replaceContractTemplate(row: any) {
+  await recordWorkspaceAction('contract.template.replace', row.id, `替换模板文件：${row.name}`)
+  ElMessage.success(`模板替换动作已记录：${row.name}`)
+}
+async function toggleContractTemplate(row: any) {
+  await recordWorkspaceAction('contract.template.toggle', row.id, `${row.enabled ? '停用' : '启用'}模板：${row.name}`)
+  ElMessage.success(`${row.enabled ? '停用' : '启用'}模板动作已记录`)
 }
 function viewContract(row: any) { router.push(`/contract/${row.id}`) }
 function terminateContract(row: any) {
@@ -1706,6 +1848,24 @@ onUnmounted(() => {
 .tabs-card { border-radius: var(--radius) !important; }
 .workspace-tabs :deep(.el-tabs__item) { font-size: 14px; font-weight: 500; }
 .tab-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+.category-select { width: 180px; }
+
+/* ── Contracts ── */
+.contract-board-switch { display: flex; justify-content: flex-start; margin-bottom: 16px; }
+.contract-template-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-white);
+}
+.contract-template-summary div { display: grid; gap: 4px; }
+.contract-template-summary strong { font-size: 15px; color: var(--text-primary); }
+.contract-template-summary span { font-size: 12px; color: var(--text-muted); }
 
 /* ── Finance ── */
 .finance-summary { margin-bottom: 16px; }

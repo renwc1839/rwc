@@ -14,7 +14,14 @@ export const usePropertyStore = defineStore('property', () => {
   const propertyImages = ref<PropertyImage[]>([])
   const imagesLoading = ref(false)
 
-  async function fetchList(params?: { skip?: number; limit?: number; district?: string; status?: string; property_manager_id?: number }) {
+  async function fetchList(params?: {
+    skip?: number
+    limit?: number
+    district?: string
+    status?: string
+    property_manager_id?: number
+    repair_worker_id?: number
+  }) {
     loading.value = true
     try {
       properties.value = await propertyService.list(params)
@@ -62,6 +69,8 @@ export const usePropertyStore = defineStore('property', () => {
       if (currentProperty.value?.id === id) {
         currentProperty.value = updated
       }
+      properties.value = properties.value.map((property) => property.id === id ? updated : property)
+      searchResults.value = searchResults.value.map((property) => property.id === id ? { ...property, ...updated } : property)
       return updated
     } finally {
       loading.value = false
