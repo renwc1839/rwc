@@ -7,6 +7,7 @@ export interface Property {
   id: number
   landlord_id: number
   property_manager_id?: number | null
+  repair_worker_id?: number | null
   title: string
   description: string
   deposit_amount?: number
@@ -44,6 +45,7 @@ export interface PropertyCreate {
   longitude?: number
   landlord_id: number
   property_manager_id?: number | null
+  repair_worker_id?: number | null
 }
 
 // Matches backend: app/schemas/property.py PropertyUpdate
@@ -61,6 +63,7 @@ export interface PropertyUpdate {
   latitude?: number
   longitude?: number
   property_manager_id?: number | null
+  repair_worker_id?: number | null
 }
 
 // Matches backend: app/schemas/property.py PropertySearchResult

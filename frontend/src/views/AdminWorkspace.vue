@@ -93,12 +93,33 @@
                 <span v-if="!isAdmin">{{ row.propertyManagerName }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="负责维修工" width="180">
+              <template #default="{ row }">
+                <el-select
+                  v-if="isAdmin"
+                  :model-value="row.repairWorkerId || ''"
+                  size="small"
+                  placeholder="未分配"
+                  clearable
+                  @change="(value: number | string) => assignPropertyRepairWorker(row, value)"
+                >
+                  <el-option
+                    v-for="worker in propertyRepairWorkerOptions"
+                    :key="worker.id"
+                    :label="worker.username"
+                    :value="worker.id"
+                  />
+                </el-select>
+                <span v-else>{{ row.repairWorkerName }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="当前租客" width="100" prop="tenant" />
             <el-table-column label="操作" width="200">
               <template #default="{ row }">
-                <el-button size="small" text type="primary" @click="editProperty(row)">编辑</el-button>
-                <el-button size="small" text type="warning" @click="maintainProperty(row)">维修</el-button>
-                <el-button size="small" text @click="viewPropertyBookings(row)">预约记录</el-button>
+                <el-button v-if="canOperateProperties" size="small" text type="primary" @click="editProperty(row)">编辑</el-button>
+                <el-button v-if="canOperateProperties" size="small" text type="warning" @click="maintainProperty(row)">维修</el-button>
+                <el-button v-if="canViewBookings" size="small" text @click="viewPropertyBookings(row)">预约记录</el-button>
+                <el-button v-if="isRepairWorker" size="small" text type="warning" @click="viewPropertyRepairs(row)">维修工单</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -329,7 +350,7 @@
             </el-table-column>
             <el-table-column label="操作" width="240">
               <template #default="{ row }">
-                <el-button v-if="canAssignRepair" size="small" type="primary" @click="assignRepair(row, row.assignee || defaultRepairWorker)">派单</el-button>
+                <el-button v-if="canAssignRepair" size="small" type="primary" @click="assignRepair(row, row.assignee || defaultRepairWorkerForRepair(row))">派单</el-button>
                 <el-button v-if="isRepairWorker" size="small" type="primary" @click="openRepairUpdate(row)">提交更新</el-button>
                 <el-button v-if="isRepairWorker && row.status === '已派单'" size="small" @click="startRepair(row)">开始维修</el-button>
                 <el-button v-if="canAssignRepair" size="small" type="success" @click="completeRepair(row)">完成</el-button>
@@ -752,6 +773,7 @@ import type { Property, PropertyStatus } from '@/types/property'
 import type { User } from '@/types/user'
 
 type PropertyManagerOption = Pick<User, 'id' | 'username'>
+type RepairWorkerOption = Pick<User, 'id' | 'username'>
 import { notificationService } from '@/services/notification'
 
 const route = useRoute()
@@ -777,7 +799,8 @@ const roleTagType = computed(() => {
   return 'info'
 })
 const isRepairWorker = computed(() => role.value === 'repair_worker')
-const canViewProperties = computed(() => ['admin', 'landlord', 'property_manager'].includes(role.value))
+const canViewProperties = computed(() => ['admin', 'landlord', 'property_manager', 'repair_worker'].includes(role.value))
+const canOperateProperties = computed(() => ['admin', 'landlord', 'property_manager'].includes(role.value))
 const canViewBookings = computed(() => ['admin', 'landlord', 'appointment_staff'].includes(role.value))
 const canViewRepairs = computed(() => ['admin', 'landlord', 'appointment_staff', 'repair_worker'].includes(role.value))
 const canViewMessages = computed(() => ['admin', 'landlord', 'appointment_staff', 'property_manager', 'repair_worker'].includes(role.value))
@@ -869,6 +892,18 @@ const propertyManagerOptions = computed<PropertyManagerOption[]>(() => {
   if (propertyManagers.value.length) return propertyManagers.value
   return portalAccounts.value
     .filter((account) => account.roleKey === 'property_manager')
+    .map((account, index) => ({
+      id: Number(account.userId || account.numericId || index + 1),
+      username: account.login || account.name,
+    }))
+})
+const propertyRepairWorkerOptions = computed<RepairWorkerOption[]>(() => {
+  const users = propertyUsers.value
+    .filter((user) => user.role === 'repair_worker')
+    .map((user) => ({ id: user.id, username: user.username }))
+  if (users.length) return users
+  return portalAccounts.value
+    .filter((account) => account.roleKey === 'repair_worker' || account.role === '维修工')
     .map((account, index) => ({
       id: Number(account.userId || account.numericId || index + 1),
       username: account.login || account.name,
@@ -982,6 +1017,32 @@ function propertyManagerName(property: Property) {
   return publisherName ? `${publisherName}（发布人默认）` : '发布人默认负责'
 }
 
+function propertyRepairWorkerName(property: Property) {
+  if (property.repair_worker_id) {
+    return propertyRepairWorkerOptions.value.find((worker) => worker.id === property.repair_worker_id)?.username
+      || userDisplayName(property.repair_worker_id)
+      || `维修工 #${property.repair_worker_id}`
+  }
+  return '未分配'
+}
+
+function propertyRepairWorkerForLabel(propertyLabel?: string) {
+  if (!propertyLabel) return ''
+  const property = properties.value.find((item) =>
+    item.title === propertyLabel
+    || item.address === propertyLabel
+    || propertyLabel.includes(item.title)
+    || propertyLabel.includes(item.address),
+  )
+  return property?.repair_worker_id
+    ? propertyRepairWorkerOptions.value.find((worker) => worker.id === property.repair_worker_id)?.username || ''
+    : ''
+}
+
+function defaultRepairWorkerForRepair(row: Repair) {
+  return row.assignee || propertyRepairWorkerForLabel(row.property) || defaultRepairWorker.value
+}
+
 const propertyRows = computed(() => properties.value.map((property) => ({
   id: property.id,
   address: property.address || property.title,
@@ -991,6 +1052,8 @@ const propertyRows = computed(() => properties.value.map((property) => ({
   status: propertyStatusLabels[property.status] || property.status,
   propertyManagerId: property.property_manager_id || null,
   propertyManagerName: propertyManagerName(property),
+  repairWorkerId: property.repair_worker_id || null,
+  repairWorkerName: propertyRepairWorkerName(property),
   usesPublisherAsManager: !property.property_manager_id,
   tenant: property.status === 'rented' ? '已出租' : '—',
   raw: property,
@@ -1158,6 +1221,17 @@ async function assignPropertyManager(row: any, value: number | string) {
   await fetchProperties()
 }
 
+async function assignPropertyRepairWorker(row: any, value: number | string) {
+  const repairWorkerId = value ? Number(value) : null
+  await propertyService.update(row.id, { repair_worker_id: repairWorkerId })
+  const workerName = repairWorkerId
+    ? propertyRepairWorkerOptions.value.find((worker) => worker.id === repairWorkerId)?.username || `维修工 #${repairWorkerId}`
+    : '未分配'
+  await recordWorkspaceAction('property.repair_worker.assign', `property-${row.id}`, `${row.address}：负责维修工调整为 ${workerName}`)
+  ElMessage.success(`房源负责维修工已调整为 ${workerName}`)
+  await fetchProperties()
+}
+
 async function maintainProperty(row: any) {
   await updatePropertyStatus(row, 'maintenance', '房源已标记为维护中')
 }
@@ -1165,6 +1239,11 @@ async function maintainProperty(row: any) {
 function viewPropertyBookings(row: any) {
   activeTab.value = 'bookings'
   ElMessage.success(`已切换到预约管理，可查看房源 ${row.id} 的预约`)
+}
+
+function viewPropertyRepairs(row: any) {
+  activeTab.value = 'repairs'
+  ElMessage.success(`已切换到维修工单，可查看 ${row.address} 的维修任务`)
 }
 
 function handleBatchAdd() {
@@ -1284,9 +1363,12 @@ async function fetchBookings() {
 
 async function fetchProperties() {
   if (!canViewProperties.value) return
-  const params: { limit: number; property_manager_id?: number } = { limit: 100 }
+  const params: { limit: number; property_manager_id?: number; repair_worker_id?: number } = { limit: 100 }
   if (role.value === 'property_manager' && authStore.user?.id) {
     params.property_manager_id = authStore.user.id
+  }
+  if (role.value === 'repair_worker' && authStore.user?.id) {
+    params.repair_worker_id = authStore.user.id
   }
   try { properties.value = await propertyService.list(params) }
   catch { properties.value = [] }

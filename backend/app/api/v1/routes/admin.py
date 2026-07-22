@@ -58,6 +58,7 @@ def property_summary(prop: Property) -> dict:
         "price_monthly": float(prop.price_monthly),
         "status": enum_value(prop.status),
         "property_manager_id": prop.property_manager_id,
+        "repair_worker_id": prop.repair_worker_id,
         "created_at": prop.created_at.isoformat(),
     }
 
@@ -173,6 +174,7 @@ async def get_user_detail(
                 .where(
                     or_(
                         Property.property_manager_id == user_id,
+                        Property.repair_worker_id == user_id,
                         (Property.property_manager_id.is_(None) & (Property.landlord_id == user_id)),
                     )
                 )

@@ -53,3 +53,7 @@ class User(TimestampMixin, Base):
         back_populates="property_manager",
         foreign_keys="Property.property_manager_id",
     )
+    repair_properties: Mapped[list["Property"]] = relationship(
+        back_populates="repair_worker",
+        foreign_keys="Property.repair_worker_id",
+    )

@@ -24,6 +24,17 @@ async def validate_property_manager(session: AsyncSession, user_id: int | None) 
         )
 
 
+async def validate_repair_worker(session: AsyncSession, user_id: int | None) -> None:
+    if user_id is None:
+        return
+    worker = await UserService(session).get(user_id)
+    if not worker or worker.role != UserRole.repair_worker:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="repair_worker_id must reference an existing repair worker",
+        )
+
+
 @router.post("", response_model=PropertyRead, status_code=status.HTTP_201_CREATED)
 async def create_property(
     property_in: PropertyCreate,
@@ -48,7 +59,13 @@ async def create_property(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins can assign a property manager",
         )
+    if current_user.role != UserRole.admin and property_in.repair_worker_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can assign a repair worker",
+        )
     await validate_property_manager(session, property_in.property_manager_id)
+    await validate_repair_worker(session, property_in.repair_worker_id)
     return await PropertyService(session).create(property_in)
 
 
@@ -89,6 +106,7 @@ async def search_properties(
             latitude=prop.latitude,
             longitude=prop.longitude,
             property_manager_id=prop.property_manager_id,
+            repair_worker_id=prop.repair_worker_id,
             created_at=prop.created_at,
             updated_at=prop.updated_at,
             images=[
@@ -119,6 +137,7 @@ async def list_properties(
     district: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     property_manager_id: int | None = Query(default=None),
+    repair_worker_id: int | None = Query(default=None),
 ) -> list[PropertyRead]:
     return await PropertyService(session).list(
         skip=skip,
@@ -126,6 +145,7 @@ async def list_properties(
         district=district,
         status=status_filter,
         property_manager_id=property_manager_id,
+        repair_worker_id=repair_worker_id,
     )
 
 
@@ -169,6 +189,13 @@ async def update_property(
                 detail="Only admins can assign a property manager",
             )
         await validate_property_manager(session, property_in.property_manager_id)
+    if "repair_worker_id" in property_in.model_fields_set:
+        if current_user.role != UserRole.admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can assign a repair worker",
+            )
+        await validate_repair_worker(session, property_in.repair_worker_id)
 
     property_obj = await property_service.update(property_id, property_in)
     if not property_obj:

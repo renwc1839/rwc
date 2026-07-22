@@ -52,6 +52,11 @@ class Property(TimestampMixin, Base):
         index=True,
         nullable=True,
     )
+    repair_worker_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
 
     institute_id: Mapped[int | None] = mapped_column(ForeignKey("institutes.id", ondelete="SET NULL"), index=True, nullable=True)
 
@@ -89,6 +94,11 @@ class Property(TimestampMixin, Base):
     property_manager: Mapped["User | None"] = relationship(
         back_populates="managed_properties",
         foreign_keys=[property_manager_id],
+        lazy="selectin",
+    )
+    repair_worker: Mapped["User | None"] = relationship(
+        back_populates="repair_properties",
+        foreign_keys=[repair_worker_id],
         lazy="selectin",
     )
 

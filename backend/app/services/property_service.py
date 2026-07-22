@@ -80,6 +80,7 @@ class PropertyService:
         district: str | None = None,
         status: str | None = None,
         property_manager_id: int | None = None,
+        repair_worker_id: int | None = None,
     ) -> list[Property]:
         stmt = select(Property).order_by(Property.created_at.desc()).offset(skip).limit(limit)
         if district:
@@ -93,6 +94,8 @@ class PropertyService:
                     (Property.property_manager_id.is_(None) & (Property.landlord_id == property_manager_id)),
                 )
             )
+        if repair_worker_id is not None:
+            stmt = stmt.where(Property.repair_worker_id == repair_worker_id)
         result = await self.session.scalars(stmt)
         return list(result)
 

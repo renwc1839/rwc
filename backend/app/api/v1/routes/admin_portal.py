@@ -7,9 +7,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_admin, require_workspace_user
-from app.models.user import User
+from app.api.deps import get_current_user, get_db_session, require_admin, require_workspace_user
+from app.models.property import Property
+from app.models.user import User, UserRole
 
 router = APIRouter()
 
@@ -940,6 +943,27 @@ def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def default_repair_worker_for_property(session: AsyncSession, property_label: str) -> str:
+    label = property_label.strip()
+    if not label:
+        return ""
+    stmt = (
+        select(User.username)
+        .join(Property, Property.repair_worker_id == User.id)
+        .where(User.role == UserRole.repair_worker)
+        .where(
+            or_(
+                Property.title == label,
+                Property.address == label,
+                Property.title.ilike(f"%{label}%"),
+                Property.address.ilike(f"%{label}%"),
+            )
+        )
+        .limit(1)
+    )
+    return (await session.scalar(stmt)) or ""
+
+
 @router.get("/repairs")
 async def list_repairs(current_user: User = Depends(get_current_user)) -> list[dict[str, Any]]:
     repairs = load_state().get("repairs", [])
@@ -949,9 +973,14 @@ async def list_repairs(current_user: User = Depends(get_current_user)) -> list[d
 
 
 @router.post("/repairs", status_code=status.HTTP_201_CREATED)
-async def create_repair(payload: RepairCreate) -> dict[str, Any]:
+async def create_repair(
+    payload: RepairCreate,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
     state = load_state()
     repair_id = f"RP-{len(state.setdefault('repairs', [])) + 5001}"
+    default_assignee = await default_repair_worker_for_property(session, payload.property)
+    initial_status = "已派单" if default_assignee else "待处理"
     repair = {
         "id": repair_id,
         "property": payload.property,
@@ -959,10 +988,10 @@ async def create_repair(payload: RepairCreate) -> dict[str, Any]:
         "category": payload.category,
         "desc": payload.desc,
         "date": now()[:10],
-        "status": "待处理",
-        "owner": "维修组",
-        "assignee": "",
-        "progressSteps": repair_progress_steps("待处理"),
+        "status": initial_status,
+        "owner": default_assignee or "维修组",
+        "assignee": default_assignee,
+        "progressSteps": repair_progress_steps(initial_status),
         "reason": "",
         "materials": "",
         "evidenceImages": [],
@@ -977,7 +1006,7 @@ async def create_repair(payload: RepairCreate) -> dict[str, Any]:
             "id": f"MSG-{len(state.get('messages', [])) + 7001}",
             "channel": "报修",
             "sender": payload.tenant,
-            "target": "维修组",
+            "target": default_assignee or "维修组",
             "summary": payload.desc,
             "related": repair_id,
             "createdAt": now(),
