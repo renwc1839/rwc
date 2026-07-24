@@ -30,6 +30,23 @@ export const adminService = {
     })
   },
 
+  listPropertyAudits(): Promise<Array<{
+    property_id: number
+    property_title: string
+    audit_status: string
+    note: string
+    operator: string
+    updated_at: string
+  }>> {
+    return api.get('/admin/properties/audits').then((r) => r.data)
+  },
+
+  auditPropertyInfo(propertyId: number, audit_status: string, note = ''): Promise<any> {
+    return api.patch(`/admin/properties/${propertyId}/audit`, null, {
+      params: { audit_status, note },
+    }).then((r) => r.data)
+  },
+
   updateUserRole(userId: number, new_role: string): Promise<User> {
     return api.patch(`/admin/users/${userId}/role`, null, {
       params: { new_role },

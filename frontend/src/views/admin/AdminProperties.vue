@@ -27,18 +27,29 @@
       <el-table-column prop="price_monthly" label="月租" width="100">
         <template #default="{ row }">{{ row.price_monthly }} 元</template>
       </el-table-column>
-      <el-table-column label="状态" width="110">
+      <el-table-column label="运营状态" width="100">
+        <template #default="{ row }">
+          <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="审核结论" width="150">
         <template #default="{ row }">
           <el-select
-            :model-value="row.status"
+            :model-value="auditMap[row.id]?.audit_status || '待复核'"
             size="small"
-            @change="(val: string) => handleStatusChange(row.id, val)"
+            @change="(val: string) => handleAuditChange(row, val)"
           >
-            <el-option label="可租" value="available" />
-            <el-option label="已租" value="rented" />
-            <el-option label="维护中" value="maintenance" />
-            <el-option label="下架" value="offline" />
+            <el-option label="信息正常" value="信息正常" />
+            <el-option label="信息异常" value="信息异常" />
+            <el-option label="待复核" value="待复核" />
           </el-select>
+        </template>
+      </el-table-column>
+      <el-table-column label="审核记录" min-width="170">
+        <template #default="{ row }">
+          <span class="audit-note">
+            {{ auditMap[row.id]?.operator ? `${auditMap[row.id].operator} ${formatDateTime(auditMap[row.id].updated_at)}` : '未审核' }}
+          </span>
         </template>
       </el-table-column>
       <el-table-column label="发布时间" width="120">
@@ -59,13 +70,21 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { adminService } from '@/services/admin'
 import { propertyService } from '@/services/property'
-import type { Property } from '@/types/property'
+import type { Property, PropertyStatus } from '@/types/property'
 
 const router = useRouter()
 const route = useRoute()
 const properties = ref<Property[]>([])
+const auditMap = ref<Record<number, any>>({})
 const loading = ref(false)
 const search = ref('')
+
+const statusLabels: Record<PropertyStatus, string> = {
+  available: '可租',
+  rented: '已租',
+  maintenance: '维护中',
+  offline: '已下架',
+}
 
 const countryKeywords: Record<string, string[]> = {
   英国: ['伦敦', '曼彻斯特', '伯明翰', '利物浦', '爱丁堡', '格拉斯哥', '布里斯托', '利兹', '谢菲尔德', '诺丁汉', 'London', 'Manchester', 'Birmingham', 'Liverpool', 'Edinburgh'],
@@ -102,22 +121,45 @@ function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('zh-CN')
 }
 
+function formatDateTime(dateStr?: string) {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleString('zh-CN', { hour12: false })
+}
+
+function statusText(status: PropertyStatus) {
+  return statusLabels[status] || status
+}
+
+function statusTag(status: PropertyStatus) {
+  return ({
+    available: 'success',
+    rented: 'warning',
+    maintenance: 'info',
+    offline: 'danger',
+  }[status] || 'info') as 'success' | 'warning' | 'info' | 'danger'
+}
+
 async function fetchProperties() {
   loading.value = true
   try {
-    properties.value = await propertyService.list({ limit: 100 })
+    const [propertyList, audits] = await Promise.all([
+      propertyService.list({ limit: 100 }),
+      adminService.listPropertyAudits(),
+    ])
+    properties.value = propertyList
+    auditMap.value = Object.fromEntries(audits.map((item) => [item.property_id, item]))
   } finally {
     loading.value = false
   }
 }
 
-async function handleStatusChange(propertyId: number, status: string) {
+async function handleAuditChange(property: Property, auditStatus: string) {
   try {
-    await adminService.moderateProperty(propertyId, status)
-    ElMessage.success('状态已更新')
-    await fetchProperties()
+    const updated = await adminService.auditPropertyInfo(property.id, auditStatus)
+    auditMap.value = { ...auditMap.value, [property.id]: updated }
+    ElMessage.success('审核结论已记录，不影响房源运营状态')
   } catch {
-    ElMessage.error('更新失败')
+    ElMessage.error('审核记录失败')
   }
 }
 
@@ -158,5 +200,10 @@ onMounted(() => {
 
 .property-title-link:hover {
   text-decoration: underline;
+}
+
+.audit-note {
+  color: #909399;
+  font-size: 13px;
 }
 </style>

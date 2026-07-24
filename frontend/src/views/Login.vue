@@ -65,7 +65,7 @@
         还没有账号？<router-link to="/register">立即注册</router-link>
       </div>
       <div v-else class="staff-hint">
-        初始测试账号：superadmin / Admin@123456，appointment_staff / Staff@123456，property_manager / Property@123456，repair_worker / Repair@123456
+        初始测试账号：superadmin / Admin@123456，appointment_staff / Staff@123456，property_manager / Property@123456，demo_landlord / Landlord@123456，repair_worker / Repair@123456
       </div>
     </el-card>
   </div>

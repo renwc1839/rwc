@@ -169,6 +169,15 @@
                 </div>
               </template>
             </el-table-column>
+            <el-table-column label="处理信息" min-width="230">
+              <template #default="{ row }">
+                <div class="booking-process">
+                  <strong>{{ row.currentStep }}</strong>
+                  <span>{{ row.adminNote || '暂无处理备注' }}</span>
+                  <small>{{ row.updatedAtText }}</small>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="90">
               <template #default="{ row }">
                 <el-tag :type="bookingStatusTag(row.status)" size="small">{{ row.statusText }}</el-tag>
@@ -358,6 +367,14 @@
             <el-table-column label="工单号" prop="id" width="100" />
             <el-table-column label="房源" prop="property" min-width="160" />
             <el-table-column label="报修租客" prop="tenant" width="100" />
+            <el-table-column label="维修渠道" width="150">
+              <template #default="{ row }">
+                <el-tag :type="row.channelRoute === '房东维修渠道' ? 'success' : 'info'" size="small">
+                  {{ row.channelRoute || '官方维修渠道' }}
+                </el-tag>
+                <div class="channel-route-note">{{ row.routeReason || row.owner || '维修组处理' }}</div>
+              </template>
+            </el-table-column>
             <el-table-column label="问题描述" prop="desc" min-width="180" />
             <el-table-column label="报修时间" prop="date" width="110" />
             <el-table-column label="维修工" width="150">
@@ -765,6 +782,32 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="tenantInfoVisible" title="租客预约资料" width="620px">
+      <div v-if="activeTenantInfo" class="tenant-info-panel">
+        <div class="tenant-info-head">
+          <strong>{{ activeTenantInfo.tenant }}</strong>
+          <el-tag :type="activeTenantInfo.profileReady ? 'success' : 'warning'" size="small">
+            {{ activeTenantInfo.profileReady ? '资料完整' : '待补资料' }}
+          </el-tag>
+        </div>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="联系方式">{{ activeTenantInfo.phone }}</el-descriptions-item>
+          <el-descriptions-item label="国籍">{{ activeTenantInfo.nationality }}</el-descriptions-item>
+          <el-descriptions-item label="学校">{{ activeTenantInfo.school }}</el-descriptions-item>
+          <el-descriptions-item label="学历">{{ activeTenantInfo.education }}</el-descriptions-item>
+          <el-descriptions-item label="护照号">{{ activeTenantInfo.passportNo }}</el-descriptions-item>
+          <el-descriptions-item label="预约时间">{{ activeTenantInfo.date }}</el-descriptions-item>
+          <el-descriptions-item label="意向房源" :span="2">{{ activeTenantInfo.property }}</el-descriptions-item>
+          <el-descriptions-item label="客户留言" :span="2">{{ activeTenantInfo.message || '无' }}</el-descriptions-item>
+          <el-descriptions-item label="处理备注" :span="2">{{ activeTenantInfo.adminNote || '暂无' }}</el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="tenantInfoVisible = false">关闭</el-button>
+        <el-button type="primary" @click="openOrderProgress(activeTenantInfo)">推进订单</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="orderProgressVisible" title="推进租房订单" width="620px">
       <el-form label-position="top">
         <el-form-item label="订单">
@@ -772,6 +815,13 @@
             <strong>{{ activeOrder?.property }}</strong>
             <p>{{ activeOrder?.tenant }} · {{ activeOrder?.phone }}</p>
             <span>{{ activeOrder?.nationality }} · {{ activeOrder?.school }} · {{ activeOrder?.education }}</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="当前处理记录">
+          <div class="booking-process full">
+            <strong>{{ activeOrder?.currentStep || '待处理' }}</strong>
+            <span>{{ activeOrder?.adminNote || '暂无处理备注' }}</span>
+            <small>{{ activeOrder?.updatedAtText }}</small>
           </div>
         </el-form-item>
         <el-form-item label="进度节点">
@@ -818,7 +868,7 @@ import { ref, computed, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import type { UploadUserFile } from 'element-plus'
+import type { UploadRawFile, UploadUserFile } from 'element-plus'
 import { repairService, type Repair } from '@/services/repair'
 import { bookingService } from '@/services/booking'
 import type { Booking, Notification } from '@/types/booking'
@@ -905,6 +955,8 @@ const messageHandleForm = reactive({
 })
 const orderProgressVisible = ref(false)
 const activeOrder = ref<any | null>(null)
+const tenantInfoVisible = ref(false)
+const activeTenantInfo = ref<any | null>(null)
 const orderProgressForm = reactive({
   progress_key: 'profile_review',
   room_number: '',
@@ -1046,6 +1098,27 @@ function bookingProgressSteps(booking: Booking) {
   }))
 }
 
+function activeBookingStep(booking: Booking) {
+  const steps = bookingProgressSteps(booking)
+  return steps.find((step) => step.active)?.label || bookingStatusText(booking.status)
+}
+
+function progressLabel(key: string) {
+  return bookingProgressLabels.find((step) => step.key === key)?.label || key
+}
+
+function formatBookingTime(value?: string | null) {
+  if (!value) return '暂无更新时间'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
+function appendBookingNote(booking: Booking, note: string) {
+  const stamp = new Date().toLocaleString('zh-CN', { hour12: false })
+  const prefix = authStore.user?.username || roleLabel.value
+  const nextLine = `${stamp} ${prefix}：${note}`
+  return booking.admin_note ? `${nextLine}\n${booking.admin_note}` : nextLine
+}
+
 const propertyStatusLabels: Record<PropertyStatus, string> = {
   available: '空置',
   rented: '已出租',
@@ -1149,6 +1222,9 @@ const bookingRows = computed(() => bookings.value.map((booking) => {
     statusText: bookingStatusText(booking.status),
     contractStatus: booking.contract_status || 'not_ready',
     message: booking.message || '',
+    adminNote: booking.admin_note || '',
+    currentStep: activeBookingStep(booking),
+    updatedAtText: formatBookingTime(booking.updated_at),
     raw: booking,
   }
 }))
@@ -1381,39 +1457,56 @@ async function handleBatchOffline() {
 }
 
 async function approveBooking(row: any) {
-  await bookingService.updateProgress(row.id, { status: 'approved', progress_key: 'profile_review', admin_note: '管理员已接收订单，进入资料审核' })
+  await bookingService.updateProgress(row.id, {
+    status: 'approved',
+    progress_key: 'profile_review',
+    admin_note: appendBookingNote(row.raw, '已确认预约，进入资料审核'),
+  })
   ElMessage.success(`已确认 ${row.tenant} 的租房申请，进入资料审核`)
   await fetchBookings()
 }
 
 async function rejectBooking(row: any) {
-  await bookingService.updateStatus(row.id, 'rejected')
+  await bookingService.updateProgress(row.id, {
+    status: 'rejected',
+    admin_note: appendBookingNote(row.raw, '已驳回预约，等待客户重新选择或补充信息'),
+  })
   ElMessage.info(`已驳回 ${row.tenant} 的看房预约`)
   await fetchBookings()
 }
 async function handleBatchRemind() {
-  await recordWorkspaceAction('booking.remind', 'bookings', `批量发送 ${filteredBookings.value.length} 条看房提醒`)
-  ElMessage.success('看房提醒已写入消息/日志')
+  await Promise.all(filteredBookings.value.map((row: any) =>
+    bookingService.updateProgress(row.id, {
+      admin_note: appendBookingNote(row.raw, '已发送看房/资料补充提醒'),
+    }),
+  ))
+  ElMessage.success(`已给 ${filteredBookings.value.length} 条预约写入提醒记录`)
+  await fetchBookings()
 }
-async function viewTenantInfo(row: any) {
-  await recordWorkspaceAction('booking.tenant_view', `booking-${row.id}`, row.message || `查看租客信息: ${row.tenant}`)
-  ElMessage.success('租客信息查看动作已写入日志')
+function viewTenantInfo(row: any) {
+  activeTenantInfo.value = row
+  tenantInfoVisible.value = true
 }
 async function markVisited(row: any) {
-  await bookingService.updateProgress(row.id, { status: 'completed', progress_key: 'completed', admin_note: '已完成入住流程' })
-  await recordWorkspaceAction('booking.visited', `booking-${row.id}`, `${row.tenant} 已接待并完成带看`)
+  await bookingService.updateProgress(row.id, {
+    status: 'completed',
+    progress_key: 'completed',
+    admin_note: appendBookingNote(row.raw, '已接待并完成带看，进入入住完成节点'),
+  })
   ElMessage.success(`已标记 ${row.tenant} 为已接待`)
   await fetchBookings()
 }
 
 function openOrderProgress(row: any) {
+  if (!row) return
+  tenantInfoVisible.value = false
   activeOrder.value = row
   const activeStep = bookingProgressSteps(row.raw).find((step) => step.active)
   orderProgressForm.progress_key = activeStep?.key === 'submitted' ? 'profile_review' : activeStep?.key || 'profile_review'
   orderProgressForm.room_number = row.roomNumber || ''
   orderProgressForm.lease_start = row.leaseStart || ''
   orderProgressForm.lease_end = row.leaseEnd || ''
-  orderProgressForm.admin_note = row.raw.admin_note || ''
+  orderProgressForm.admin_note = ''
   orderProgressVisible.value = true
 }
 
@@ -1424,9 +1517,8 @@ async function submitOrderProgress() {
     room_number: orderProgressForm.room_number || undefined,
     lease_start: orderProgressForm.lease_start || undefined,
     lease_end: orderProgressForm.lease_end || undefined,
-    admin_note: orderProgressForm.admin_note || undefined,
+    admin_note: appendBookingNote(activeOrder.value.raw, orderProgressForm.admin_note || `进度推进到 ${progressLabel(orderProgressForm.progress_key)}`),
   })
-  await recordWorkspaceAction('booking.progress', `booking-${activeOrder.value.id}`, `${activeOrder.value.tenant} 进度推进到 ${orderProgressForm.progress_key}`)
   orderProgressVisible.value = false
   ElMessage.success('订单进度已更新，租客端可查看')
   await fetchBookings()
@@ -1741,7 +1833,7 @@ async function submitRepairUpdate() {
   }
   const rawFiles = repairUpdateFiles.value
     .map((item) => item.raw)
-    .filter((file): file is File => file instanceof File)
+    .filter((file): file is UploadRawFile => Boolean(file))
   if (rawFiles.length === 0) {
     ElMessage.error('请至少上传一张现场图片')
     return
@@ -1917,6 +2009,54 @@ onUnmounted(() => {
 .message-dialog-summary { padding: 10px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg); }
 .message-dialog-summary p { margin: 6px 0; color: var(--text-secondary); line-height: 1.5; }
 .message-dialog-summary span { font-size: 12px; color: var(--text-muted); }
+
+.booking-process {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.booking-process strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.booking-process span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 38px;
+  overflow: hidden;
+}
+
+.booking-process small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.booking-process.full {
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.booking-process.full span {
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.tenant-info-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.tenant-info-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
 .order-steps {
   display: flex;

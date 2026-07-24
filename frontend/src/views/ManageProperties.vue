@@ -26,23 +26,27 @@
             <el-tag size="small" type="info">{{ typeLabels[row.property_type as PropertyType] }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="90">
+        <el-table-column prop="status" label="状态" width="140">
           <template #default="{ row }">
-            <el-tag size="small" :type="statusTagType(row.status)">
-              {{ statusLabels[row.status as PropertyStatus] }}
-            </el-tag>
+            <el-select
+              :model-value="row.status"
+              size="small"
+              @change="(val: string) => updateStatus(row, val as PropertyStatus)"
+            >
+              <el-option label="可租" value="available" />
+              <el-option label="已租" value="rented" />
+              <el-option label="维护中" value="maintenance" />
+              <el-option label="已下架" value="offline" />
+            </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }">
             <el-button size="small" text type="primary" @click="editProperty(row.id)">
               编辑
             </el-button>
             <el-button size="small" text type="success" @click="manageImages(row.id)">
               图片
-            </el-button>
-            <el-button size="small" text type="warning" @click="toggleStatus(row)">
-              {{ row.status === 'offline' ? '上架' : '下架' }}
             </el-button>
             <el-popconfirm
               title="确定删除该房源吗？"
@@ -88,16 +92,6 @@ const typeLabels: Record<PropertyType, string> = {
   shared: '合租',
 }
 
-function statusTagType(status: PropertyStatus): string {
-  const map: Record<PropertyStatus, string> = {
-    available: 'success',
-    rented: 'warning',
-    maintenance: 'info',
-    offline: 'danger',
-  }
-  return map[status]
-}
-
 function goCreate() {
   router.push('/property/create')
 }
@@ -110,11 +104,11 @@ function manageImages(id: number) {
   router.push('/property/' + id + '/images')
 }
 
-async function toggleStatus(property: Property) {
-  const newStatus: PropertyStatus = property.status === 'offline' ? 'available' : 'offline'
+async function updateStatus(property: Property, newStatus: PropertyStatus) {
+  if (property.status === newStatus) return
   try {
     await propertyStore.update(property.id, { status: newStatus })
-    ElMessage.success(newStatus === 'offline' ? '已下架' : '已上架')
+    ElMessage.success(`房源状态已改为${statusLabels[newStatus]}`)
     propertyStore.fetchList({ limit: 100 })
   } catch {
     // handled by interceptor

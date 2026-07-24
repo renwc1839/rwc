@@ -36,7 +36,7 @@ def role_label(role: UserRole | str) -> str:
     value = getattr(role, "value", role)
     labels = {
         "tenant": "租客",
-        "landlord": "房源管理人员",
+        "landlord": "房东",
         "appointment_staff": "预约对接人员",
         "property_manager": "房源管理人员",
         "repair_worker": "维修工",
@@ -60,6 +60,17 @@ def property_summary(prop: Property) -> dict:
         "property_manager_id": prop.property_manager_id,
         "repair_worker_id": prop.repair_worker_id,
         "created_at": prop.created_at.isoformat(),
+    }
+
+
+def property_audit_summary(item: dict) -> dict:
+    return {
+        "property_id": item.get("property_id"),
+        "property_title": item.get("property_title", ""),
+        "audit_status": item.get("audit_status", "待复核"),
+        "note": item.get("note", ""),
+        "operator": item.get("operator", ""),
+        "updated_at": item.get("updated_at", ""),
     }
 
 
@@ -227,6 +238,71 @@ async def get_user_detail(
     }
 
 
+@router.get("/properties/audits")
+async def list_property_audits(_: User = Depends(require_admin)) -> list[dict]:
+    from app.api.v1.routes.admin_portal import load_state
+
+    state = load_state()
+    return [property_audit_summary(item) for item in state.get("propertyAudits", [])]
+
+
+@router.patch("/properties/{property_id}/audit")
+async def audit_property_info(
+    property_id: int,
+    audit_status: str = Query(...),
+    note: str = Query(default=""),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_admin),
+) -> dict:
+    valid_statuses = {"信息正常", "信息异常", "待复核"}
+    if audit_status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid audit status. Must be one of: {valid_statuses}",
+        )
+
+    prop = await PropertyService(session).get(property_id)
+    if not prop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
+
+    from app.api.v1.routes.admin_portal import append_log, load_state, now, save_state
+
+    state = load_state()
+    audits = state.setdefault("propertyAudits", [])
+    record = next((item for item in audits if item.get("property_id") == property_id), None)
+    if record is None:
+        record = {"property_id": property_id}
+        audits.insert(0, record)
+
+    record.update(
+        {
+            "property_id": property_id,
+            "property_title": prop.title,
+            "audit_status": audit_status,
+            "note": note,
+            "operator": current_user.username,
+            "updated_at": now(),
+        }
+    )
+    append_log(
+        state,
+        "房源信息审核",
+        str(property_id),
+        f"{prop.title} 标记为 {audit_status}；备注：{note or '-'}",
+        operator=current_user.username,
+    )
+    save_state(state)
+
+    await AuditService(session).create_log(
+        user_id=current_user.id,
+        action="property_info_audit",
+        resource_type="property",
+        resource_id=property_id,
+        details={"audit_status": audit_status, "note": note},
+    )
+    return property_audit_summary(record)
+
+
 @router.patch("/properties/{property_id}/status")
 async def moderate_property(
     property_id: int,
@@ -266,12 +342,10 @@ async def update_user_role(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_admin),
 ) -> UserRead:
-    if new_role == "landlord":
-        new_role = "property_manager"
-    if new_role not in {"tenant", "appointment_staff", "property_manager", "repair_worker", "admin"}:
+    if new_role not in {"tenant", "landlord", "appointment_staff", "property_manager", "repair_worker", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role. Must be: tenant, appointment_staff, property_manager, repair_worker, or admin",
+            detail="Invalid role. Must be: tenant, landlord, appointment_staff, property_manager, repair_worker, or admin",
         )
 
     from app.schemas.user import UserUpdate

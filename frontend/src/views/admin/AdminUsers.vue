@@ -61,11 +61,12 @@
 
       <el-tab-pane label="后台人员" name="staff">
         <div class="tab-toolbar">
-          <span>房东角色已合并为房源管理人员；历史房东账号可在这里改为房源管理人员。</span>
+          <span>后台人员按真实职责分开：房东、房源管理人员、预约对接人员、维修工分别管理。</span>
           <div class="toolbar-actions">
             <el-select v-model="staffRoleFilter" placeholder="全部后台角色" clearable>
               <el-option label="全部后台角色" value="all" />
               <el-option label="预约对接人员" value="appointment_staff" />
+              <el-option label="房东" value="landlord" />
               <el-option label="房源管理人员" value="property_manager" />
               <el-option label="维修工" value="repair_worker" />
               <el-option label="超级管理员" value="admin" />
@@ -92,6 +93,7 @@
                 @change="(val: string) => handleRoleChange(row.id, val)"
               >
                 <el-option label="预约对接人员" value="appointment_staff" />
+                <el-option label="房东" value="landlord" />
                 <el-option label="房源管理人员" value="property_manager" />
                 <el-option label="维修工" value="repair_worker" />
                 <el-option label="超级管理员" value="admin" />
@@ -253,14 +255,13 @@ function filterUsers(items: User[], keyword: string) {
 
 function roleFilterMatch(role: string, filter: string) {
   if (!filter || filter === 'all') return true
-  if (filter === 'property_manager') return ['property_manager', 'landlord'].includes(role)
   return role === filter
 }
 
 function roleText(role: string) {
   return {
     tenant: '租客',
-    landlord: '房源管理人员',
+    landlord: '房东',
     appointment_staff: '预约对接人员',
     property_manager: '房源管理人员',
     repair_worker: '维修工',
@@ -269,7 +270,7 @@ function roleText(role: string) {
 }
 
 function editableRole(role: string) {
-  return role === 'landlord' ? 'property_manager' : role
+  return role
 }
 
 function maskEmail(value: string | null) {

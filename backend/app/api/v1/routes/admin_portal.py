@@ -50,6 +50,7 @@ def default_permission_catalog() -> list[dict[str, Any]]:
         {"key": "schedule.conflict", "name": "查看人员冲突", "group": "人员排班", "desc": "查看撞单、跨城和超负载提醒"},
         {"key": "workorder.all", "name": "总工单查看", "group": "工单管理", "desc": "查看全部投诉、维修、带看反馈工单"},
         {"key": "repair.assign", "name": "维修联系分配", "group": "预约对接", "desc": "分配维修联系人和处理进度"},
+        {"key": "landlord.repair.channel", "name": "房东维修渠道", "group": "房东管理", "desc": "管理房东自有维修工和官方渠道分流"},
         {"key": "appointment.list", "name": "客户预约列表", "group": "预约对接", "desc": "查看客户预约并推进确认"},
         {"key": "feedback.work", "name": "工作反馈界面", "group": "预约对接", "desc": "填写带看、维修、客户沟通反馈"},
         {"key": "property.publish", "name": "发布房源", "group": "房源管理", "desc": "进入房源发布流程"},
@@ -85,6 +86,13 @@ def default_role_profiles() -> list[dict[str, Any]]:
             "name": "房源管理人员",
             "desc": "负责房源发布、房源信息维护和房源状态运营。",
             "permissions": ["property.publish", "property.manage"],
+            "locked": False,
+        },
+        {
+            "key": "landlord",
+            "name": "房东",
+            "desc": "负责自己旗下房源、租客沟通和自有维修渠道；无自有维修工时转官方维修组。",
+            "permissions": ["property.manage", "repair.assign", "repair.progress", "workorder.all", "landlord.repair.channel"],
             "locked": False,
         },
         {
@@ -146,6 +154,18 @@ def default_accounts() -> list[dict[str, Any]]:
             "twoFactor": True,
             "status": "启用",
             "permissions": ["repair.work", "repair.progress"],
+        },
+        {
+            "id": "A-005",
+            "name": "demo_landlord",
+            "login": "demo_landlord",
+            "trialPassword": "Landlord@123456",
+            "roleKey": "landlord",
+            "role": "房东",
+            "phone": "135****8808",
+            "twoFactor": True,
+            "status": "启用",
+            "permissions": ["property.manage", "repair.assign", "repair.progress", "workorder.all", "landlord.repair.channel"],
         },
     ]
 
@@ -527,6 +547,9 @@ def load_state() -> dict[str, Any]:
             repair["progressSteps"] = steps
             changed = True
         for field, default_value in (
+            ("channelRoute", "房东维修渠道" if repair.get("landlord") and repair.get("assignee") else "官方维修渠道"),
+            ("routeReason", ""),
+            ("landlord", ""),
             ("reason", ""),
             ("materials", ""),
             ("evidenceImages", []),
@@ -570,7 +593,7 @@ ROLE_LABELS = {
     "super_admin": "超级管理员",
     "appointment_staff": "预约对接人员",
     "property_manager": "房源管理人员",
-    "landlord": "房源管理人员",
+    "landlord": "房东",
     "repair_worker": "维修工",
     "tenant": "租客",
     "customer": "租客",
@@ -580,8 +603,6 @@ ROLE_LABELS = {
 def normalize_role(role: str | None) -> str:
     if role in {"super_admin"}:
         return "admin"
-    if role in {"landlord"}:
-        return "property_manager"
     return role or "staff"
 
 
@@ -646,7 +667,7 @@ def tenant_contacts_from_messages(state: dict[str, Any]) -> list[dict[str, Any]]
 def tenant_contacts_from_repairs(state: dict[str, Any], username: str | None = None) -> list[dict[str, Any]]:
     contacts: dict[str, dict[str, Any]] = {}
     for repair in state.get("repairs", []):
-        if username and repair.get("assignee") != username and repair.get("owner") != username:
+        if username and repair.get("assignee") != username and repair.get("owner") != username and repair.get("landlord") != username:
             continue
         tenant = repair.get("tenant")
         if not tenant:
@@ -679,6 +700,9 @@ def allowed_chat_contacts(state: dict[str, Any], current_user: User) -> list[dic
         return arrangers + tenant_contacts_from_repairs(state, username)
     if role == "property_manager":
         return admins
+    if role == "landlord":
+        repair_workers = [item for item in staff if item["role"] == "repair_worker"]
+        return admins + repair_workers + tenant_contacts_from_repairs(state, username)
     return []
 
 
@@ -934,7 +958,7 @@ def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
         "id": f"WO-{repair['id'].replace('RP-', '')}",
         "type": "维修报修",
         "title": repair["desc"],
-        "owner": repair.get("assignee") or repair.get("owner") or "维修组",
+        "owner": repair.get("owner") or repair.get("assignee") or "维修组",
         "related": repair["id"],
         "deadline": "48 小时内",
         "priority": "重要" if repair.get("category") in {"水电", "家电"} else "一般",
@@ -943,14 +967,21 @@ def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def default_repair_worker_for_property(session: AsyncSession, property_label: str) -> str:
+async def repair_route_for_property(session: AsyncSession, property_label: str) -> dict[str, str]:
     label = property_label.strip()
+    default_route = {
+        "owner": "维修组",
+        "assignee": "",
+        "landlord": "",
+        "channelRoute": "官方维修渠道",
+        "routeReason": "未匹配到房东自有维修工，转官方维修组处理",
+    }
     if not label:
-        return ""
+        return default_route
+
     stmt = (
-        select(User.username)
-        .join(Property, Property.repair_worker_id == User.id)
-        .where(User.role == UserRole.repair_worker)
+        select(Property, User.username)
+        .join(User, Property.landlord_id == User.id)
         .where(
             or_(
                 Property.title == label,
@@ -961,7 +992,33 @@ async def default_repair_worker_for_property(session: AsyncSession, property_lab
         )
         .limit(1)
     )
-    return (await session.scalar(stmt)) or ""
+    result = (await session.execute(stmt)).first()
+    if not result:
+        return default_route
+
+    property_obj, landlord_name = result
+    if not property_obj.repair_worker_id:
+        return {
+            **default_route,
+            "landlord": landlord_name or "",
+            "routeReason": f"{landlord_name or '房东'} 未绑定自有维修工，转官方维修组处理",
+        }
+
+    worker = await session.get(User, property_obj.repair_worker_id)
+    if not worker or worker.role != UserRole.repair_worker:
+        return {
+            **default_route,
+            "landlord": landlord_name or "",
+            "routeReason": f"{landlord_name or '房东'} 绑定的维修工不可用，转官方维修组处理",
+        }
+
+    return {
+        "owner": landlord_name or "房东",
+        "assignee": worker.username,
+        "landlord": landlord_name or "",
+        "channelRoute": "房东维修渠道",
+        "routeReason": f"{landlord_name or '房东'} 旗下维修工 {worker.username} 处理",
+    }
 
 
 @router.get("/repairs")
@@ -969,6 +1026,8 @@ async def list_repairs(current_user: User = Depends(get_current_user)) -> list[d
     repairs = load_state().get("repairs", [])
     if current_user.role.value == "repair_worker":
         return [item for item in repairs if item.get("assignee") == current_user.username]
+    if current_user.role.value == "landlord":
+        return [item for item in repairs if item.get("owner") == current_user.username or item.get("landlord") == current_user.username]
     return repairs
 
 
@@ -979,8 +1038,8 @@ async def create_repair(
 ) -> dict[str, Any]:
     state = load_state()
     repair_id = f"RP-{len(state.setdefault('repairs', [])) + 5001}"
-    default_assignee = await default_repair_worker_for_property(session, payload.property)
-    initial_status = "已派单" if default_assignee else "待处理"
+    route = await repair_route_for_property(session, payload.property)
+    initial_status = "已派单" if route["assignee"] else "待处理"
     repair = {
         "id": repair_id,
         "property": payload.property,
@@ -989,8 +1048,11 @@ async def create_repair(
         "desc": payload.desc,
         "date": now()[:10],
         "status": initial_status,
-        "owner": default_assignee or "维修组",
-        "assignee": default_assignee,
+        "owner": route["owner"],
+        "assignee": route["assignee"],
+        "landlord": route["landlord"],
+        "channelRoute": route["channelRoute"],
+        "routeReason": route["routeReason"],
         "progressSteps": repair_progress_steps(initial_status),
         "reason": "",
         "materials": "",
@@ -1006,7 +1068,7 @@ async def create_repair(
             "id": f"MSG-{len(state.get('messages', [])) + 7001}",
             "channel": "报修",
             "sender": payload.tenant,
-            "target": default_assignee or "维修组",
+            "target": route["owner"],
             "summary": payload.desc,
             "related": repair_id,
             "createdAt": now(),
@@ -1028,7 +1090,10 @@ async def update_repair(repair_id: str, payload: RepairUpdate) -> dict[str, Any]
                 repair["progressSteps"] = repair_progress_steps(payload.status)
             if payload.assignee is not None:
                 repair["assignee"] = payload.assignee
-                repair["owner"] = payload.assignee or "维修组"
+                if repair.get("channelRoute") == "房东维修渠道" and repair.get("landlord"):
+                    repair["owner"] = repair["landlord"]
+                else:
+                    repair["owner"] = payload.assignee or "维修组"
             if payload.result is not None:
                 repair["result"] = payload.result
             if payload.reason is not None:
@@ -1055,10 +1120,10 @@ async def update_repair(repair_id: str, payload: RepairUpdate) -> dict[str, Any]
                     if payload.status is not None:
                         work_order["status"] = payload.status
                     if payload.assignee is not None:
-                        work_order["owner"] = payload.assignee or "维修组"
+                        work_order["owner"] = repair.get("owner") or payload.assignee or "维修组"
                     if payload.result is not None:
                         work_order["result"] = payload.result
-            append_log(state, "维修工单更新", repair_id, f"状态更新为 {repair['status']}；维修工：{repair.get('assignee') or '-'}；原因：{payload.reason or '-'}；材料：{payload.materials or '-'}；处理记录：{payload.result or '-'}")
+            append_log(state, "维修工单更新", repair_id, f"状态更新为 {repair['status']}；渠道：{repair.get('channelRoute') or '官方维修渠道'}；维修工：{repair.get('assignee') or '-'}；原因：{payload.reason or '-'}；材料：{payload.materials or '-'}；处理记录：{payload.result or '-'}")
             save_state(state)
             return repair
     raise HTTPException(status_code=404, detail="Repair not found")
@@ -1110,7 +1175,7 @@ async def get_workspace_state(current_user: User = Depends(require_workspace_use
     state = load_state()
     role = getattr(current_user.role, "value", current_user.role)
 
-    if role in {"admin", "landlord"}:
+    if role == "admin":
         return state
 
     payload: dict[str, Any] = {
@@ -1142,6 +1207,20 @@ async def get_workspace_state(current_user: User = Depends(require_workspace_use
         payload["workOrders"] = [
             item for item in state.get("workOrders", [])
             if item.get("related") in related_repairs or item.get("owner") == current_user.username
+        ]
+    elif role == "landlord":
+        payload["repairs"] = [
+            item for item in state.get("repairs", [])
+            if item.get("owner") == current_user.username or item.get("landlord") == current_user.username
+        ]
+        related_repairs = {item.get("id") for item in payload["repairs"]}
+        payload["workOrders"] = [
+            item for item in state.get("workOrders", [])
+            if item.get("related") in related_repairs or item.get("owner") == current_user.username
+        ]
+        payload["messages"] = [
+            item for item in state.get("messages", [])
+            if item.get("related") in related_repairs or item.get("target") == current_user.username
         ]
     elif role == "property_manager":
         payload["workOrders"] = [

@@ -29,7 +29,7 @@
           <el-tag v-else-if="authStore.isAppointmentStaff" type="success" size="small" effect="dark">预约对接人员</el-tag>
           <el-tag v-else-if="authStore.isPropertyManager" type="warning" size="small" effect="dark">房源管理人员</el-tag>
           <el-tag v-else-if="authStore.isRepairWorker" type="info" size="small" effect="dark">维修工</el-tag>
-          <el-tag v-else-if="authStore.isLandlord" type="warning" size="small" effect="dark">公寓运营商</el-tag>
+          <el-tag v-else-if="authStore.isLandlord" type="warning" size="small" effect="dark">房东</el-tag>
           <el-tag v-else type="info" size="small" effect="plain">租客</el-tag>
 
           <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
