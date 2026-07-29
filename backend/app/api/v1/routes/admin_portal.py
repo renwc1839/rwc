@@ -7,9 +7,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_admin, require_workspace_user
-from app.models.user import User
+from app.api.deps import get_current_user, get_db_session, require_admin, require_workspace_user
+from app.models.property import Property
+from app.models.user import User, UserRole
 
 router = APIRouter()
 
@@ -47,6 +50,7 @@ def default_permission_catalog() -> list[dict[str, Any]]:
         {"key": "schedule.conflict", "name": "查看人员冲突", "group": "人员排班", "desc": "查看撞单、跨城和超负载提醒"},
         {"key": "workorder.all", "name": "总工单查看", "group": "工单管理", "desc": "查看全部投诉、维修、带看反馈工单"},
         {"key": "repair.assign", "name": "维修联系分配", "group": "预约对接", "desc": "分配维修联系人和处理进度"},
+        {"key": "landlord.repair.channel", "name": "房东维修渠道", "group": "房东管理", "desc": "管理房东自有维修工和官方渠道分流"},
         {"key": "appointment.list", "name": "客户预约列表", "group": "预约对接", "desc": "查看客户预约并推进确认"},
         {"key": "feedback.work", "name": "工作反馈界面", "group": "预约对接", "desc": "填写带看、维修、客户沟通反馈"},
         {"key": "property.publish", "name": "发布房源", "group": "房源管理", "desc": "进入房源发布流程"},
@@ -82,6 +86,13 @@ def default_role_profiles() -> list[dict[str, Any]]:
             "name": "房源管理人员",
             "desc": "负责房源发布、房源信息维护和房源状态运营。",
             "permissions": ["property.publish", "property.manage"],
+            "locked": False,
+        },
+        {
+            "key": "landlord",
+            "name": "房东",
+            "desc": "负责自己旗下房源、租客沟通和自有维修渠道；无自有维修工时转官方维修组。",
+            "permissions": ["property.manage", "repair.assign", "repair.progress", "workorder.all", "landlord.repair.channel"],
             "locked": False,
         },
         {
@@ -143,6 +154,18 @@ def default_accounts() -> list[dict[str, Any]]:
             "twoFactor": True,
             "status": "启用",
             "permissions": ["repair.work", "repair.progress"],
+        },
+        {
+            "id": "A-005",
+            "name": "demo_landlord",
+            "login": "demo_landlord",
+            "trialPassword": "Landlord@123456",
+            "roleKey": "landlord",
+            "role": "房东",
+            "phone": "135****8808",
+            "twoFactor": True,
+            "status": "启用",
+            "permissions": ["property.manage", "repair.assign", "repair.progress", "workorder.all", "landlord.repair.channel"],
         },
     ]
 
@@ -436,6 +459,8 @@ def seed_state() -> dict[str, Any]:
         "reports": [],
         "exportRequests": [],
         "actionHistory": [],
+        "chatThreads": [],
+        "chatReadReceipts": {},
         "accounts": default_accounts(),
         "settings": {"platformName": "AI 全球公寓租赁", "servicePhone": "+86 400-888-0000", "cities": ["伦敦", "纽约", "悉尼"]},
         "logs": [
@@ -464,6 +489,8 @@ def load_state() -> dict[str, Any]:
         "reports",
         "exportRequests",
         "actionHistory",
+        "chatThreads",
+        "chatReadReceipts",
         "accounts",
     ):
         if key not in state:
@@ -520,6 +547,9 @@ def load_state() -> dict[str, Any]:
             repair["progressSteps"] = steps
             changed = True
         for field, default_value in (
+            ("channelRoute", "房东维修渠道" if repair.get("landlord") and repair.get("assignee") else "官方维修渠道"),
+            ("routeReason", ""),
+            ("landlord", ""),
             ("reason", ""),
             ("materials", ""),
             ("evidenceImages", []),
@@ -558,6 +588,201 @@ def append_log(state: dict[str, Any], action: str, target: str, content: str, op
     )
 
 
+ROLE_LABELS = {
+    "admin": "超级管理员",
+    "super_admin": "超级管理员",
+    "appointment_staff": "预约对接人员",
+    "property_manager": "房源管理人员",
+    "landlord": "房东",
+    "repair_worker": "维修工",
+    "tenant": "租客",
+    "customer": "租客",
+}
+
+
+def normalize_role(role: str | None) -> str:
+    if role in {"super_admin"}:
+        return "admin"
+    return role or "staff"
+
+
+def chat_key(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-") or "contact"
+
+
+def conversation_id_for(current_key: str, contact_key: str, scope: str = "direct") -> str:
+    participants = sorted([current_key, contact_key])
+    return f"{scope}:{participants[0]}:{participants[1]}"
+
+
+def current_contact(current_user: User) -> dict[str, Any]:
+    role = normalize_role(getattr(current_user.role, "value", current_user.role))
+    return {
+        "key": f"staff:{current_user.username}",
+        "name": current_user.username,
+        "role": role,
+        "roleLabel": ROLE_LABELS.get(role, role),
+        "scope": "当前账号",
+    }
+
+
+def account_contacts(state: dict[str, Any]) -> list[dict[str, Any]]:
+    contacts: list[dict[str, Any]] = []
+    for account in state.get("accounts", []):
+        login = account.get("login") or account.get("name")
+        if not login:
+            continue
+        role = normalize_role(account.get("roleKey"))
+        contacts.append(
+            {
+                "key": f"staff:{login}",
+                "name": account.get("name") or login,
+                "login": login,
+                "role": role,
+                "roleLabel": ROLE_LABELS.get(role, account.get("role") or role),
+                "scope": "后台人员",
+            }
+        )
+    return contacts
+
+
+def tenant_contacts_from_messages(state: dict[str, Any]) -> list[dict[str, Any]]:
+    contacts: dict[str, dict[str, Any]] = {}
+    for message in state.get("messages", []):
+        sender = message.get("sender")
+        if not sender or sender == "系统":
+            continue
+        key = f"tenant:{chat_key(sender)}"
+        contacts[key] = {
+            "key": key,
+            "name": sender,
+            "role": "tenant",
+            "roleLabel": "租客",
+            "scope": message.get("channel") or "客户咨询",
+            "related": message.get("related") or message.get("id"),
+        }
+    return list(contacts.values())
+
+
+def tenant_contacts_from_repairs(state: dict[str, Any], username: str | None = None) -> list[dict[str, Any]]:
+    contacts: dict[str, dict[str, Any]] = {}
+    for repair in state.get("repairs", []):
+        if username and repair.get("assignee") != username and repair.get("owner") != username and repair.get("landlord") != username:
+            continue
+        tenant = repair.get("tenant")
+        if not tenant:
+            continue
+        key = f"tenant:{chat_key(tenant)}"
+        contacts[key] = {
+            "key": key,
+            "name": tenant,
+            "role": "tenant",
+            "roleLabel": "租客",
+            "scope": f"维修对象 {repair.get('id')}",
+            "related": repair.get("id"),
+        }
+    return list(contacts.values())
+
+
+def allowed_chat_contacts(state: dict[str, Any], current_user: User) -> list[dict[str, Any]]:
+    me = current_contact(current_user)
+    role = me["role"]
+    username = current_user.username
+    staff = [item for item in account_contacts(state) if item["key"] != me["key"]]
+    admins = [item for item in staff if item["role"] == "admin"]
+
+    if role == "admin":
+        return [item for item in staff if item["role"] != "tenant"]
+    if role == "appointment_staff":
+        return admins + tenant_contacts_from_messages(state)
+    if role == "repair_worker":
+        arrangers = [item for item in staff if item["role"] in {"admin", "appointment_staff"}]
+        return arrangers + tenant_contacts_from_repairs(state, username)
+    if role == "property_manager":
+        return admins
+    if role == "landlord":
+        repair_workers = [item for item in staff if item["role"] == "repair_worker"]
+        return admins + repair_workers + tenant_contacts_from_repairs(state, username)
+    return []
+
+
+def seed_conversation_messages(state: dict[str, Any], contact: dict[str, Any]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    if contact.get("role") != "tenant":
+        return messages
+    for message in state.get("messages", []):
+        if chat_key(message.get("sender", "")) == contact["key"].replace("tenant:", ""):
+            messages.append(
+                {
+                    "id": f"seed-{message.get('id')}",
+                    "senderKey": contact["key"],
+                    "senderName": contact["name"],
+                    "content": message.get("summary", ""),
+                    "createdAt": message.get("createdAt") or now(),
+                    "readBy": [] if message.get("status") == "未读" else ["*"],
+                    "system": False,
+                }
+            )
+    for repair in state.get("repairs", []):
+        if chat_key(repair.get("tenant", "")) == contact["key"].replace("tenant:", ""):
+            messages.append(
+                {
+                    "id": f"seed-{repair.get('id')}",
+                    "senderKey": contact["key"],
+                    "senderName": contact["name"],
+                    "content": f"报修：{repair.get('desc', '')}",
+                    "createdAt": repair.get("date") or now(),
+                    "readBy": ["*"],
+                    "system": False,
+                }
+            )
+    return sorted(messages, key=lambda item: item.get("createdAt", ""))
+
+
+def build_chat_conversation(state: dict[str, Any], current_user: User, contact: dict[str, Any]) -> dict[str, Any]:
+    me = current_contact(current_user)
+    conversation_id = conversation_id_for(me["key"], contact["key"])
+    stored = next(
+        (item for item in state.setdefault("chatThreads", []) if item.get("id") == conversation_id),
+        None,
+    )
+    stored_messages = list(stored.get("messages", [])) if stored else []
+    seeded = seed_conversation_messages(state, contact)
+    seen = {item.get("id") for item in stored_messages}
+    messages = [item for item in seeded if item.get("id") not in seen] + stored_messages
+    messages = sorted(messages, key=lambda item: item.get("createdAt", ""))
+    read_receipts = state.setdefault("chatReadReceipts", {})
+    enriched_messages: list[dict[str, Any]] = []
+    for raw_message in messages:
+        message = dict(raw_message)
+        read_by = set(message.get("readBy") or [])
+        read_by.update(read_receipts.get(message.get("id"), []))
+        message["readBy"] = list(read_by)
+        message["unread"] = (
+            message.get("senderKey") != me["key"]
+            and me["key"] not in read_by
+            and "*" not in read_by
+        )
+        enriched_messages.append(message)
+    unread_count = sum(1 for message in enriched_messages if message.get("unread"))
+    return {
+        "id": conversation_id,
+        "contact": {**contact, "conversationId": conversation_id, "unreadCount": unread_count},
+        "participants": [me, contact],
+        "messages": enriched_messages,
+        "lastMessage": enriched_messages[-1] if enriched_messages else None,
+        "unreadCount": unread_count,
+    }
+
+
+def chat_state_for_user(state: dict[str, Any], current_user: User) -> dict[str, Any]:
+    contacts = allowed_chat_contacts(state, current_user)
+    conversations = [build_chat_conversation(state, current_user, contact) for contact in contacts]
+    contacts = [conversation["contact"] for conversation in conversations]
+    unread_total = sum(conversation.get("unreadCount", 0) for conversation in conversations)
+    return {"me": current_contact(current_user), "contacts": contacts, "conversations": conversations, "unreadTotal": unread_total}
+
+
 class ComplaintCreate(BaseModel):
     category: str
     title: str = Field(min_length=2, max_length=120)
@@ -566,6 +791,26 @@ class ComplaintCreate(BaseModel):
     contact: str = Field(min_length=3, max_length=80)
     city: str = Field(min_length=1, max_length=80)
     property: str | None = None
+
+
+class CustomerContactCreate(BaseModel):
+    sender: str = Field(min_length=1, max_length=80)
+    contact: str = Field(min_length=3, max_length=80)
+    summary: str = Field(min_length=3, max_length=500)
+    property: str | None = None
+    propertyId: int | None = None
+    channel: str = Field(default="房源咨询", max_length=40)
+
+
+class MessageHandleUpdate(BaseModel):
+    action: str = Field(pattern="^(claim|reply|resolve)$")
+    reply: str | None = Field(default=None, max_length=800)
+    assignee: str | None = Field(default=None, max_length=80)
+
+
+class ChatMessageCreate(BaseModel):
+    conversationId: str = Field(min_length=1, max_length=160)
+    content: str = Field(min_length=1, max_length=1000)
 
 
 class StatusUpdate(BaseModel):
@@ -669,12 +914,51 @@ async def create_complaint(payload: ComplaintCreate) -> dict[str, Any]:
     return complaint
 
 
+@router.post("/messages", status_code=status.HTTP_201_CREATED)
+async def create_customer_message(payload: CustomerContactCreate) -> dict[str, Any]:
+    state = load_state()
+    message_id = f"MSG-{len(state.get('messages', [])) + 7001}"
+    related = f"PROP-{payload.propertyId}" if payload.propertyId else ""
+    summary_parts = [payload.summary]
+    if payload.property:
+        summary_parts.append(f"关联房源：{payload.property}")
+    summary_parts.append(f"联系方式：{payload.contact}")
+    message = {
+        "id": message_id,
+        "channel": payload.channel or "房源咨询",
+        "sender": payload.sender,
+        "target": "预约对接组",
+        "summary": "；".join(summary_parts),
+        "related": related,
+        "createdAt": now(),
+        "status": "未读",
+    }
+    state.setdefault("messages", []).insert(0, message)
+    state.setdefault("workOrders", []).insert(
+        0,
+        {
+            "id": f"WO-{len(state.get('workOrders', [])) + 2101}",
+            "type": "客户咨询",
+            "title": payload.summary,
+            "owner": "预约对接组",
+            "related": message_id,
+            "deadline": "2 小时内",
+            "priority": "一般",
+            "status": "待处理",
+            "result": "",
+        },
+    )
+    append_log(state, "客户咨询", message_id, f"{payload.sender} 咨询：{payload.summary}", operator="customer")
+    save_state(state)
+    return message
+
+
 def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": f"WO-{repair['id'].replace('RP-', '')}",
         "type": "维修报修",
         "title": repair["desc"],
-        "owner": repair.get("assignee") or repair.get("owner") or "维修组",
+        "owner": repair.get("owner") or repair.get("assignee") or "维修组",
         "related": repair["id"],
         "deadline": "48 小时内",
         "priority": "重要" if repair.get("category") in {"水电", "家电"} else "一般",
@@ -683,18 +967,79 @@ def repair_to_work_order(repair: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def repair_route_for_property(session: AsyncSession, property_label: str) -> dict[str, str]:
+    label = property_label.strip()
+    default_route = {
+        "owner": "维修组",
+        "assignee": "",
+        "landlord": "",
+        "channelRoute": "官方维修渠道",
+        "routeReason": "未匹配到房东自有维修工，转官方维修组处理",
+    }
+    if not label:
+        return default_route
+
+    stmt = (
+        select(Property, User.username)
+        .join(User, Property.landlord_id == User.id)
+        .where(
+            or_(
+                Property.title == label,
+                Property.address == label,
+                Property.title.ilike(f"%{label}%"),
+                Property.address.ilike(f"%{label}%"),
+            )
+        )
+        .limit(1)
+    )
+    result = (await session.execute(stmt)).first()
+    if not result:
+        return default_route
+
+    property_obj, landlord_name = result
+    if not property_obj.repair_worker_id:
+        return {
+            **default_route,
+            "landlord": landlord_name or "",
+            "routeReason": f"{landlord_name or '房东'} 未绑定自有维修工，转官方维修组处理",
+        }
+
+    worker = await session.get(User, property_obj.repair_worker_id)
+    if not worker or worker.role != UserRole.repair_worker:
+        return {
+            **default_route,
+            "landlord": landlord_name or "",
+            "routeReason": f"{landlord_name or '房东'} 绑定的维修工不可用，转官方维修组处理",
+        }
+
+    return {
+        "owner": landlord_name or "房东",
+        "assignee": worker.username,
+        "landlord": landlord_name or "",
+        "channelRoute": "房东维修渠道",
+        "routeReason": f"{landlord_name or '房东'} 旗下维修工 {worker.username} 处理",
+    }
+
+
 @router.get("/repairs")
 async def list_repairs(current_user: User = Depends(get_current_user)) -> list[dict[str, Any]]:
     repairs = load_state().get("repairs", [])
     if current_user.role.value == "repair_worker":
         return [item for item in repairs if item.get("assignee") == current_user.username]
+    if current_user.role.value == "landlord":
+        return [item for item in repairs if item.get("owner") == current_user.username or item.get("landlord") == current_user.username]
     return repairs
 
 
 @router.post("/repairs", status_code=status.HTTP_201_CREATED)
-async def create_repair(payload: RepairCreate) -> dict[str, Any]:
+async def create_repair(
+    payload: RepairCreate,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
     state = load_state()
     repair_id = f"RP-{len(state.setdefault('repairs', [])) + 5001}"
+    route = await repair_route_for_property(session, payload.property)
+    initial_status = "已派单" if route["assignee"] else "待处理"
     repair = {
         "id": repair_id,
         "property": payload.property,
@@ -702,10 +1047,13 @@ async def create_repair(payload: RepairCreate) -> dict[str, Any]:
         "category": payload.category,
         "desc": payload.desc,
         "date": now()[:10],
-        "status": "待处理",
-        "owner": "维修组",
-        "assignee": "",
-        "progressSteps": repair_progress_steps("待处理"),
+        "status": initial_status,
+        "owner": route["owner"],
+        "assignee": route["assignee"],
+        "landlord": route["landlord"],
+        "channelRoute": route["channelRoute"],
+        "routeReason": route["routeReason"],
+        "progressSteps": repair_progress_steps(initial_status),
         "reason": "",
         "materials": "",
         "evidenceImages": [],
@@ -720,7 +1068,7 @@ async def create_repair(payload: RepairCreate) -> dict[str, Any]:
             "id": f"MSG-{len(state.get('messages', [])) + 7001}",
             "channel": "报修",
             "sender": payload.tenant,
-            "target": "维修组",
+            "target": route["owner"],
             "summary": payload.desc,
             "related": repair_id,
             "createdAt": now(),
@@ -742,7 +1090,10 @@ async def update_repair(repair_id: str, payload: RepairUpdate) -> dict[str, Any]
                 repair["progressSteps"] = repair_progress_steps(payload.status)
             if payload.assignee is not None:
                 repair["assignee"] = payload.assignee
-                repair["owner"] = payload.assignee or "维修组"
+                if repair.get("channelRoute") == "房东维修渠道" and repair.get("landlord"):
+                    repair["owner"] = repair["landlord"]
+                else:
+                    repair["owner"] = payload.assignee or "维修组"
             if payload.result is not None:
                 repair["result"] = payload.result
             if payload.reason is not None:
@@ -769,10 +1120,10 @@ async def update_repair(repair_id: str, payload: RepairUpdate) -> dict[str, Any]
                     if payload.status is not None:
                         work_order["status"] = payload.status
                     if payload.assignee is not None:
-                        work_order["owner"] = payload.assignee or "维修组"
+                        work_order["owner"] = repair.get("owner") or payload.assignee or "维修组"
                     if payload.result is not None:
                         work_order["result"] = payload.result
-            append_log(state, "维修工单更新", repair_id, f"状态更新为 {repair['status']}；维修工：{repair.get('assignee') or '-'}；原因：{payload.reason or '-'}；材料：{payload.materials or '-'}；处理记录：{payload.result or '-'}")
+            append_log(state, "维修工单更新", repair_id, f"状态更新为 {repair['status']}；渠道：{repair.get('channelRoute') or '官方维修渠道'}；维修工：{repair.get('assignee') or '-'}；原因：{payload.reason or '-'}；材料：{payload.materials or '-'}；处理记录：{payload.result or '-'}")
             save_state(state)
             return repair
     raise HTTPException(status_code=404, detail="Repair not found")
@@ -817,6 +1168,162 @@ async def get_overview(_: object = Depends(require_admin)) -> dict[str, Any]:
 @router.get("/state")
 async def get_admin_portal_state(_: object = Depends(require_admin)) -> dict[str, Any]:
     return load_state()
+
+
+@router.get("/workspace-state")
+async def get_workspace_state(current_user: User = Depends(require_workspace_user)) -> dict[str, Any]:
+    state = load_state()
+    role = getattr(current_user.role, "value", current_user.role)
+
+    if role == "admin":
+        return state
+
+    payload: dict[str, Any] = {
+        "messages": [],
+        "workOrders": [],
+        "accounts": state.get("accounts", []),
+        "repairs": [],
+        "schedules": [],
+        "logs": [],
+        "financeItems": [],
+        "permissionCatalog": [],
+        "roleProfiles": [],
+    }
+
+    if role == "appointment_staff":
+        payload["messages"] = state.get("messages", [])
+        payload["workOrders"] = state.get("workOrders", [])
+        payload["repairs"] = state.get("repairs", [])
+        payload["schedules"] = [
+            item for item in state.get("schedules", [])
+            if item.get("role") == "预约对接人员" or item.get("name") == current_user.username
+        ]
+    elif role == "repair_worker":
+        payload["repairs"] = [
+            item for item in state.get("repairs", [])
+            if item.get("assignee") == current_user.username or item.get("owner") == current_user.username
+        ]
+        related_repairs = {item.get("id") for item in payload["repairs"]}
+        payload["workOrders"] = [
+            item for item in state.get("workOrders", [])
+            if item.get("related") in related_repairs or item.get("owner") == current_user.username
+        ]
+    elif role == "landlord":
+        payload["repairs"] = [
+            item for item in state.get("repairs", [])
+            if item.get("owner") == current_user.username or item.get("landlord") == current_user.username
+        ]
+        related_repairs = {item.get("id") for item in payload["repairs"]}
+        payload["workOrders"] = [
+            item for item in state.get("workOrders", [])
+            if item.get("related") in related_repairs or item.get("owner") == current_user.username
+        ]
+        payload["messages"] = [
+            item for item in state.get("messages", [])
+            if item.get("related") in related_repairs or item.get("target") == current_user.username
+        ]
+    elif role == "property_manager":
+        payload["workOrders"] = [
+            item for item in state.get("workOrders", [])
+            if item.get("type") in {"房源审核", "房源运营"}
+        ]
+
+    return payload
+
+
+@router.get("/chat")
+async def get_chat_state(current_user: User = Depends(require_workspace_user)) -> dict[str, Any]:
+    state = load_state()
+    chat_state = chat_state_for_user(state, current_user)
+    if "chatThreads" not in state:
+        state["chatThreads"] = []
+        save_state(state)
+    return chat_state
+
+
+@router.post("/chat/messages", status_code=status.HTTP_201_CREATED)
+async def send_chat_message(
+    payload: ChatMessageCreate,
+    current_user: User = Depends(require_workspace_user),
+) -> dict[str, Any]:
+    state = load_state()
+    chat_state = chat_state_for_user(state, current_user)
+    conversation = next(
+        (item for item in chat_state["conversations"] if item["id"] == payload.conversationId),
+        None,
+    )
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chat target is not allowed for this role")
+
+    me = chat_state["me"]
+    contact = conversation["contact"]
+    threads = state.setdefault("chatThreads", [])
+    thread = next((item for item in threads if item.get("id") == payload.conversationId), None)
+    if thread is None:
+        thread = {
+            "id": payload.conversationId,
+            "participants": [me["key"], contact["key"]],
+            "messages": [],
+        }
+        threads.append(thread)
+
+    message = {
+        "id": f"CHAT-{sum(len(item.get('messages', [])) for item in threads) + 1:05d}",
+        "senderKey": me["key"],
+        "senderName": me["name"],
+        "senderRole": me["roleLabel"],
+        "content": payload.content.strip(),
+        "createdAt": now(),
+        "readBy": [me["key"]],
+        "system": False,
+    }
+    thread.setdefault("messages", []).append(message)
+    append_log(state, "聊天消息", payload.conversationId, f"{me['name']} 发送消息给 {contact['name']}", operator=me["name"])
+    save_state(state)
+
+    refreshed = chat_state_for_user(state, current_user)
+    return next(item for item in refreshed["conversations"] if item["id"] == payload.conversationId)
+
+
+@router.patch("/chat/{conversation_id}/read")
+async def mark_chat_read(
+    conversation_id: str,
+    current_user: User = Depends(require_workspace_user),
+) -> dict[str, Any]:
+    state = load_state()
+    chat_state = chat_state_for_user(state, current_user)
+    conversation = next(
+        (item for item in chat_state["conversations"] if item["id"] == conversation_id),
+        None,
+    )
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chat target is not allowed for this role")
+
+    me = chat_state["me"]
+    receipts = state.setdefault("chatReadReceipts", {})
+    for message in conversation.get("messages", []):
+        if message.get("senderKey") == me["key"]:
+            continue
+        message_id = message.get("id")
+        if not message_id:
+            continue
+        readers = set(receipts.get(message_id, []))
+        readers.add(me["key"])
+        receipts[message_id] = list(readers)
+
+    for thread in state.setdefault("chatThreads", []):
+        if thread.get("id") != conversation_id:
+            continue
+        for message in thread.get("messages", []):
+            if message.get("senderKey") == me["key"]:
+                continue
+            read_by = set(message.get("readBy") or [])
+            read_by.add(me["key"])
+            message["readBy"] = list(read_by)
+
+    save_state(state)
+    refreshed = chat_state_for_user(state, current_user)
+    return next(item for item in refreshed["conversations"] if item["id"] == conversation_id)
 
 
 @router.post("/actions", status_code=status.HTTP_201_CREATED)
@@ -886,6 +1393,78 @@ async def create_portal_action(
     append_log(state, "运营动作", payload.target, payload.content, operator=getattr(current_user, "username", "workspace"))
     save_state(state)
     return action
+
+
+@router.patch("/messages/{message_id}/handle")
+async def handle_message(
+    message_id: str,
+    payload: MessageHandleUpdate,
+    current_user: User = Depends(require_workspace_user),
+) -> dict[str, Any]:
+    role = getattr(current_user.role, "value", current_user.role)
+    if role not in {"admin", "landlord", "appointment_staff"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Message handling role required")
+
+    state = load_state()
+    timestamp = now()
+    operator = current_user.username
+
+    for message in state.get("messages", []):
+        if message.get("id") != message_id:
+            continue
+
+        work_order = next(
+            (
+                item for item in state.get("workOrders", [])
+                if item.get("related") in {message_id, message.get("related")}
+            ),
+            None,
+        )
+
+        assignee = payload.assignee or message.get("assignee") or operator
+        message["assignee"] = assignee
+        message["handledAt"] = timestamp
+
+        if payload.action == "claim":
+            message["status"] = "处理中"
+            message["result"] = f"{assignee} 已认领，待回复客户"
+            if work_order:
+                work_order["owner"] = assignee
+                work_order["status"] = "处理中"
+                work_order["result"] = "消息已认领，等待客户沟通反馈"
+            log_content = f"{operator} 认领消息 {message_id}"
+        elif payload.action == "reply":
+            if not payload.reply or not payload.reply.strip():
+                raise HTTPException(status_code=400, detail="Reply content required")
+            reply = {
+                "operator": operator,
+                "content": payload.reply.strip(),
+                "createdAt": timestamp,
+            }
+            message.setdefault("replies", []).insert(0, reply)
+            message["status"] = "已回复"
+            message["result"] = payload.reply.strip()
+            if work_order:
+                work_order["owner"] = assignee
+                work_order["status"] = "处理中"
+                work_order["result"] = payload.reply.strip()
+            log_content = f"{operator} 回复消息 {message_id}：{payload.reply.strip()}"
+        else:
+            result = payload.reply.strip() if payload.reply else "客户咨询已处理完结"
+            message["status"] = "已处理"
+            message["result"] = result
+            message["resolvedAt"] = timestamp
+            if work_order:
+                work_order["owner"] = assignee
+                work_order["status"] = "已完结"
+                work_order["result"] = result
+            log_content = f"{operator} 结案消息 {message_id}：{result}"
+
+        append_log(state, "消息处理", message_id, log_content, operator=operator)
+        save_state(state)
+        return {"message": message, "workOrder": work_order}
+
+    raise HTTPException(status_code=404, detail="Message not found")
 
 
 @router.patch("/accounts/{account_id}")

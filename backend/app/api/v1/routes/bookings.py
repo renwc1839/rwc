@@ -64,7 +64,8 @@ async def get_booking(
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-    if current_user.id not in {booking.tenant_id, booking.landlord_id} and current_user.role != UserRole.admin:
+    can_view_all = current_user.role in {UserRole.admin, UserRole.appointment_staff}
+    if current_user.id not in {booking.tenant_id, booking.landlord_id} and not can_view_all:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return booking
@@ -77,10 +78,10 @@ async def update_booking_status(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> BookingRead:
-    if update_in.status not in {BookingStatus.approved, BookingStatus.rejected}:
+    if update_in.status not in {BookingStatus.approved, BookingStatus.rejected, BookingStatus.completed}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Status must be approved or rejected",
+            detail="Status must be approved, rejected, or completed",
         )
 
     booking_service = BookingService(session)
@@ -97,6 +98,30 @@ async def update_booking_status(
         )
 
     updated = await booking_service.update_status(booking_id, update_in.status)
+    return updated
+
+
+@router.patch("/{booking_id}/progress", response_model=BookingRead)
+async def update_booking_progress(
+    booking_id: int,
+    update_in: BookingUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> BookingRead:
+    booking_service = BookingService(session)
+    booking = await booking_service.get(booking_id)
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    can_update_all = current_user.role in {UserRole.admin, UserRole.appointment_staff}
+    can_update_own = current_user.role in {UserRole.landlord, UserRole.property_manager} and current_user.id == booking.landlord_id
+    if not can_update_all and not can_update_own:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace staff can update booking progress",
+        )
+
+    updated = await booking_service.update_progress(booking_id, update_in)
     return updated
 
 

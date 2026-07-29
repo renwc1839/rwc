@@ -6,6 +6,8 @@ export type PropertyStatus = 'available' | 'rented' | 'maintenance' | 'offline'
 export interface Property {
   id: number
   landlord_id: number
+  property_manager_id?: number | null
+  repair_worker_id?: number | null
   title: string
   description: string
   deposit_amount?: number
@@ -42,6 +44,8 @@ export interface PropertyCreate {
   latitude?: number
   longitude?: number
   landlord_id: number
+  property_manager_id?: number | null
+  repair_worker_id?: number | null
 }
 
 // Matches backend: app/schemas/property.py PropertyUpdate
@@ -58,6 +62,8 @@ export interface PropertyUpdate {
   status?: PropertyStatus
   latitude?: number
   longitude?: number
+  property_manager_id?: number | null
+  repair_worker_id?: number | null
 }
 
 // Matches backend: app/schemas/property.py PropertySearchResult

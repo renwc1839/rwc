@@ -21,6 +21,22 @@
             <p v-if="booking.message" class="booking-msg">
               💬 {{ booking.message }}
             </p>
+            <div class="booking-progress">
+              <div
+                v-for="step in orderSteps(booking)"
+                :key="step.key"
+                class="order-step"
+                :class="{ done: step.done, active: step.active }"
+              >
+                <i>{{ step.done ? '✓' : '' }}</i>
+                <span>{{ step.label }}</span>
+              </div>
+            </div>
+            <div class="booking-extra">
+              <span v-if="booking.room_number">房间号：{{ booking.room_number }}</span>
+              <span v-if="booking.lease_start || booking.lease_end">租期：{{ booking.lease_start || '待定' }} ~ {{ booking.lease_end || '待定' }}</span>
+              <span>合同：{{ contractLabel(booking.contract_status) }}</span>
+            </div>
           </div>
         </div>
         <div class="booking-right">
@@ -36,11 +52,11 @@
               取消预订
             </el-button>
             <el-button
-              v-if="booking.status === 'pending' || booking.status === 'approved'"
+              v-if="booking.contract_status === 'pending_signature' || booking.contract_status === 'signed'"
               type="primary" size="small" round
               @click="goConfirmRent(booking)"
             >
-              确认租房
+              {{ booking.contract_status === 'signed' ? '支付定金' : '查看合同' }}
             </el-button>
             <el-button
               v-if="booking.status === 'completed'"
@@ -76,16 +92,44 @@ const statusTags: Record<string, string> = {
   pending: 'warning', approved: 'success', rejected: 'danger',
   cancelled: 'info', completed: '',
 }
+const fallbackSteps = [
+  { key: 'submitted', label: '提交申请' },
+  { key: 'profile_review', label: '资料审核' },
+  { key: 'tenant_confirmed', label: '租客确认' },
+  { key: 'landlord_confirmed', label: '管理员确认' },
+  { key: 'contract_ready', label: '合同签署' },
+  { key: 'deposit_paid', label: '支付定金' },
+  { key: 'completed', label: '完成入住' },
+]
 
 function statusLabel(s: string) { return statusLabels[s] || s }
 function statusTag(s: string) { return statusTags[s] || 'info' }
 function formatDate(d: string) { return new Date(d).toLocaleDateString('zh-CN') }
+function contractLabel(status?: string | null) {
+  return ({ not_ready: '待双方确认', pending_signature: '待签署', signed: '已签署' } as Record<string, string>)[status || 'not_ready'] || '待双方确认'
+}
+function orderSteps(booking: Booking) {
+  if (booking.progress_steps?.length) return booking.progress_steps
+  const activeMap: Record<string, string> = {
+    pending: 'submitted',
+    approved: 'landlord_confirmed',
+    completed: 'completed',
+    rejected: 'submitted',
+    cancelled: 'submitted',
+  }
+  const activeKey = activeMap[booking.status] || 'submitted'
+  const activeIndex = fallbackSteps.findIndex((step) => step.key === activeKey)
+  return fallbackSteps.map((step, index) => ({
+    ...step,
+    done: index <= activeIndex,
+    active: index === activeIndex,
+  }))
+}
 
 async function fetchBookings() {
   loading.value = true
   try {
-    const all = await bookingService.list()
-    bookings.value = all.filter((b) => b.deposit_status !== 'paid' && b.deposit_status !== 'confirmed')
+    bookings.value = await bookingService.list()
   }
   catch { /* ignore */ }
   finally { loading.value = false }
@@ -141,7 +185,7 @@ onMounted(fetchBookings)
   padding: 18px 20px;
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   transition: all 0.2s;
 }
 
@@ -178,6 +222,56 @@ onMounted(fetchBookings)
   font-size: 13px;
   color: var(--text-muted);
   margin-bottom: 2px;
+}
+
+.booking-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.order-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.order-step i {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-style: normal;
+  font-size: 11px;
+  background: #fff;
+}
+
+.order-step.done {
+  color: var(--text-primary);
+}
+
+.order-step.done i {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.order-step.active {
+  font-weight: 700;
+}
+
+.booking-extra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .booking-right {

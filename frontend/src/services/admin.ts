@@ -1,6 +1,6 @@
 ﻿import api from './api'
 import type { AdminStats, AuditLog, EmbeddingStats, ImportResult, ImportTask, ImportTaskDetail } from '@/types/admin'
-import type { User } from '@/types/user'
+import type { AdminUserDetail, User } from '@/types/user'
 
 export const adminService = {
   getStats(): Promise<AdminStats> {
@@ -16,16 +16,45 @@ export const adminService = {
     return api.get('/admin/logs', { params }).then((r) => r.data)
   },
 
+  listUsers(params?: {
+    skip?: number
+    limit?: number
+    role?: string
+  }): Promise<User[]> {
+    return api.get('/admin/users', { params }).then((r) => r.data)
+  },
+
   moderateProperty(propertyId: number, new_status: string): Promise<void> {
     return api.patch(`/admin/properties/${propertyId}/status`, null, {
       params: { new_status },
     })
   },
 
+  listPropertyAudits(): Promise<Array<{
+    property_id: number
+    property_title: string
+    audit_status: string
+    note: string
+    operator: string
+    updated_at: string
+  }>> {
+    return api.get('/admin/properties/audits').then((r) => r.data)
+  },
+
+  auditPropertyInfo(propertyId: number, audit_status: string, note = ''): Promise<any> {
+    return api.patch(`/admin/properties/${propertyId}/audit`, null, {
+      params: { audit_status, note },
+    }).then((r) => r.data)
+  },
+
   updateUserRole(userId: number, new_role: string): Promise<User> {
     return api.patch(`/admin/users/${userId}/role`, null, {
       params: { new_role },
     }).then((r) => r.data)
+  },
+
+  getUserDetail(userId: number): Promise<AdminUserDetail> {
+    return api.get(`/admin/users/${userId}/detail`).then((r) => r.data)
   },
 
   getEmbeddingStats(): Promise<EmbeddingStats> {

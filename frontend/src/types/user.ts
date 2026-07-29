@@ -21,3 +21,16 @@ export interface UserProfileUpdate {
   phone?: string
   email?: string
 }
+
+export interface AdminUserDetail {
+  user: User & {
+    role_label: string
+  }
+  tenant_bookings: Array<Record<string, any>>
+  handled_bookings: Array<Record<string, any>>
+  managed_properties: Array<Record<string, any>>
+  appointments: Array<Record<string, any>>
+  repairs: Array<Record<string, any>>
+  work_orders: Array<Record<string, any>>
+  messages: Array<Record<string, any>>
+}

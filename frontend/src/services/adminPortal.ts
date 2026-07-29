@@ -40,6 +40,22 @@ export interface ComplaintCreate {
   property?: string
 }
 
+export interface CustomerContactCreate {
+  sender: string
+  contact: string
+  summary: string
+  property?: string
+  propertyId?: number
+  channel?: string
+}
+
+export interface ChatState {
+  me: any
+  contacts: any[]
+  conversations: any[]
+  unreadTotal?: number
+}
+
 export const adminPortalService = {
   getPublicOptions(): Promise<{ categories: string[]; cities: string[] }> {
     return api.get('/admin-portal/public/options').then((r) => r.data)
@@ -49,12 +65,39 @@ export const adminPortalService = {
     return api.get('/admin-portal/state').then((r) => r.data)
   },
 
+  getWorkspaceState(): Promise<Partial<PortalState>> {
+    return api.get('/admin-portal/workspace-state').then((r) => r.data)
+  },
+
   getOverview(): Promise<PortalOverview> {
     return api.get('/admin-portal/overview').then((r) => r.data)
   },
 
   createComplaint(data: ComplaintCreate): Promise<any> {
     return api.post('/admin-portal/complaints', data).then((r) => r.data)
+  },
+
+  createCustomerMessage(data: CustomerContactCreate): Promise<any> {
+    return api.post('/admin-portal/messages', data).then((r) => r.data)
+  },
+
+  handleMessage(
+    id: string,
+    data: { action: 'claim' | 'reply' | 'resolve'; reply?: string; assignee?: string },
+  ): Promise<any> {
+    return api.patch(`/admin-portal/messages/${id}/handle`, data).then((r) => r.data)
+  },
+
+  getChatState(): Promise<ChatState> {
+    return api.get('/admin-portal/chat').then((r) => r.data)
+  },
+
+  sendChatMessage(data: { conversationId: string; content: string }): Promise<any> {
+    return api.post('/admin-portal/chat/messages', data).then((r) => r.data)
+  },
+
+  markChatRead(conversationId: string): Promise<any> {
+    return api.patch(`/admin-portal/chat/${encodeURIComponent(conversationId)}/read`).then((r) => r.data)
   },
 
   updateComplaint(id: string, data: { status: string; result?: string }): Promise<any> {

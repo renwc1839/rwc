@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token as encode_access_token
 from app.core.security import decode_access_token, hash_password, verify_password
-from app.models.user import User, UserStatus
+from app.models.user import User, UserRole, UserStatus
 from app.schemas.auth import RegisterRequest
 from app.schemas.user import UserCreate
 from app.services.user_service import UserService
@@ -22,7 +22,7 @@ class AuthService:
             password_hash=hash_password(register_in.password),
             phone=register_in.phone,
             email=register_in.email,
-            role=register_in.role,
+            role=UserRole.tenant,
         )
         return await self.users.create(user_in)
 

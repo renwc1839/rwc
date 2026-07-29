@@ -10,6 +10,9 @@ export interface Repair {
   status: string
   owner?: string
   assignee?: string
+  landlord?: string
+  channelRoute?: string
+  routeReason?: string
   progressSteps?: Array<{ key: string; label: string; done: boolean; active: boolean }>
   reason?: string
   materials?: string
@@ -45,6 +48,9 @@ export const repairService = {
   update(id: string, data: {
     status?: string
     assignee?: string
+  landlord?: string
+  channelRoute?: string
+  routeReason?: string
     result?: string
     reason?: string
     materials?: string
