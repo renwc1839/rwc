@@ -629,14 +629,45 @@
 
         <!-- Tab10: 操作日志 -->
         <el-tab-pane v-if="canViewAdminTabs" label="🧾 操作日志" name="logs">
-          <el-table :data="portalLogs" stripe>
-            <el-table-column prop="operator" label="操作人" width="120" />
-            <el-table-column prop="time" label="操作时间" width="180" />
-            <el-table-column prop="type" label="类型" width="140" />
-            <el-table-column prop="target" label="对象" width="140" />
-            <el-table-column prop="content" label="内容" min-width="260" />
-            <el-table-column prop="ip" label="IP" width="120" />
-          </el-table>
+          <div class="audit-log-board">
+            <div class="section-toolbar">
+              <div>
+                <strong>审计日志</strong>
+                <span>按日期归档，再按类型细分，便于追溯具体操作。</span>
+              </div>
+              <el-tag type="info" size="small">{{ portalLogs.length }} 条</el-tag>
+            </div>
+
+            <section v-for="dateGroup in groupedPortalLogs" :key="dateGroup.date" class="audit-date-group">
+              <div class="audit-date-head">
+                <strong>{{ dateGroup.date }}</strong>
+                <span>{{ dateGroup.total }} 条</span>
+              </div>
+              <div class="audit-type-groups">
+                <article v-for="typeGroup in dateGroup.types" :key="typeGroup.type" class="audit-type-group">
+                  <div class="audit-type-head">
+                    <el-tag size="small">{{ typeGroup.type }}</el-tag>
+                    <span>{{ typeGroup.items.length }} 条</span>
+                  </div>
+                  <div class="audit-log-list">
+                    <div v-for="item in typeGroup.items" :key="`${item.time}-${item.target}-${item.content}`" class="audit-log-row">
+                      <div class="audit-log-time">{{ formatPortalLogTime(item.time) }}</div>
+                      <div class="audit-log-main">
+                        <div class="audit-log-title">
+                          <strong>{{ item.operator || '系统' }}</strong>
+                          <span>{{ item.target || '未指定对象' }}</span>
+                        </div>
+                        <p>{{ item.content }}</p>
+                      </div>
+                      <div class="audit-log-ip">{{ item.ip || '-' }}</div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <el-empty v-if="!groupedPortalLogs.length" description="暂无操作日志" />
+          </div>
         </el-tab-pane>
 
         <!-- Tab11: 门店设置 -->
@@ -1023,6 +1054,29 @@ const financeTotal = computed(() => portalFinanceItems.value.reduce((total, item
   const amount = Number(String(item.amount || '').replace(/[^\d.-]/g, ''))
   return Number.isFinite(amount) ? total + amount : total
 }, 0))
+const groupedPortalLogs = computed(() => {
+  const dateMap = new Map<string, Map<string, any[]>>()
+  portalLogs.value.forEach((log) => {
+    const date = formatPortalLogDate(log.time)
+    const type = log.type || '其他操作'
+    if (!dateMap.has(date)) dateMap.set(date, new Map())
+    const typeMap = dateMap.get(date)!
+    if (!typeMap.has(type)) typeMap.set(type, [])
+    typeMap.get(type)!.push(log)
+  })
+
+  return Array.from(dateMap.entries()).map(([date, typeMap]) => {
+    const types = Array.from(typeMap.entries()).map(([type, items]) => ({
+      type,
+      items: [...items].sort((a, b) => normalizeLogTime(b.time) - normalizeLogTime(a.time)),
+    }))
+    return {
+      date,
+      types,
+      total: types.reduce((sum, item) => sum + item.items.length, 0),
+    }
+  })
+})
 
 const statsCards = computed(() =>
   [
@@ -1096,6 +1150,32 @@ function bookingProgressSteps(booking: Booking) {
     done: index <= activeIndex,
     active: index === activeIndex,
   }))
+}
+
+function normalizeLogTime(value: string) {
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function formatPortalLogDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value || '未记录日期'
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+  })
+}
+
+function formatPortalLogTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value || '-'
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 function activeBookingStep(booking: Booking) {
@@ -2199,6 +2279,119 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.3;
+}
+
+.audit-log-board {
+  display: grid;
+  gap: 14px;
+}
+
+.section-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.section-toolbar strong,
+.section-toolbar span {
+  display: block;
+}
+
+.section-toolbar span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.audit-date-group {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  background: #fff;
+  overflow: hidden;
+}
+
+.audit-date-head,
+.audit-type-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.audit-date-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.audit-date-head span,
+.audit-type-head span {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.audit-type-groups {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.audit-type-group {
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.audit-type-head {
+  padding: 10px 12px;
+}
+
+.audit-log-list {
+  display: grid;
+}
+
+.audit-log-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr) 120px;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-light);
+  align-items: start;
+}
+
+.audit-log-time {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-log-title {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.audit-log-title span,
+.audit-log-ip,
+.audit-log-main p {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.audit-log-main p {
+  margin: 0;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.audit-log-ip {
+  text-align: right;
 }
 
 /* ── Settings ── */
