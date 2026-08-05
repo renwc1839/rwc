@@ -121,6 +121,70 @@
         </el-col>
       </el-row>
 
+      <div v-if="importResult.inspection" class="inspection-section">
+        <div class="inspection-header">
+          <h4>上传后检测</h4>
+          <el-tag :type="inspectionTagType(importResult.inspection.level)">
+            {{ inspectionLabel(importResult.inspection.level) }}
+          </el-tag>
+        </div>
+        <div class="inspection-grid">
+          <div class="inspection-cell">
+            <span>异常项</span>
+            <strong>{{ importResult.inspection.summary.abnormal }}</strong>
+          </div>
+          <div class="inspection-cell">
+            <span>API 成功</span>
+            <strong>{{ importResult.inspection.summary.api_success }}</strong>
+          </div>
+          <div class="inspection-cell">
+            <span>API 异常</span>
+            <strong>{{ importResult.inspection.summary.api_failed }}</strong>
+          </div>
+          <div class="inspection-cell">
+            <span>已跳过</span>
+            <strong>{{ importResult.inspection.summary.api_skipped }}</strong>
+          </div>
+        </div>
+        <el-table
+          v-if="importResult.inspection.abnormal_items.length"
+          :data="importResult.inspection.abnormal_items"
+          border
+          stripe
+          size="small"
+          max-height="220"
+        >
+          <el-table-column prop="row" label="行号" width="80" />
+          <el-table-column prop="type" label="类型" width="150" show-overflow-tooltip />
+          <el-table-column prop="message" label="异常内容" show-overflow-tooltip />
+          <el-table-column prop="level" label="等级" width="100">
+            <template #default="{ row }">
+              <el-tag :type="inspectionTagType(row.level)" size="small">
+                {{ inspectionLabel(row.level) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-table
+          v-if="importResult.inspection.api_checks.length"
+          :data="importResult.inspection.api_checks"
+          border
+          stripe
+          size="small"
+          max-height="180"
+          class="api-table"
+        >
+          <el-table-column prop="row" label="行号" width="80" />
+          <el-table-column prop="service" label="API" width="140" />
+          <el-table-column prop="status" label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="apiStatusTagType(row.status)" size="small">{{ row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="message" label="结果" show-overflow-tooltip />
+        </el-table>
+      </div>
+
       <!-- Error Details -->
       <div v-if="importResult.error_log && importResult.error_log.length" class="error-section">
         <h4>错误详情</h4>
@@ -189,6 +253,14 @@
             </span>
           </template>
         </el-table-column>
+        <el-table-column label="检测" width="120">
+          <template #default="{ row }">
+            <el-tag :type="inspectionTagType(row.inspection_level || 'normal')" size="small">
+              {{ inspectionLabel(row.inspection_level || 'normal') }}
+              <span v-if="row.abnormal_count"> {{ row.abnormal_count }}</span>
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="时间" width="170">
           <template #default="{ row }">
             {{ new Date(row.created_at).toLocaleString() }}
@@ -232,8 +304,53 @@
           <el-descriptions-item label="总计">{{ detailTask.total_records }}</el-descriptions-item>
           <el-descriptions-item label="成功">{{ detailTask.success_records }}</el-descriptions-item>
           <el-descriptions-item label="失败">{{ detailTask.failed_records }}</el-descriptions-item>
+          <el-descriptions-item label="检测">
+            <el-tag :type="inspectionTagType(detailTask.inspection_level || 'normal')" size="small">
+              {{ inspectionLabel(detailTask.inspection_level || 'normal') }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ new Date(detailTask.created_at).toLocaleString() }}</el-descriptions-item>
         </el-descriptions>
+        <div v-if="detailTask.inspection" class="detail-errors">
+          <h4>检测明细</h4>
+          <div class="inspection-grid">
+            <div class="inspection-cell">
+              <span>异常项</span>
+              <strong>{{ detailTask.inspection.summary.abnormal }}</strong>
+            </div>
+            <div class="inspection-cell">
+              <span>API 成功</span>
+              <strong>{{ detailTask.inspection.summary.api_success }}</strong>
+            </div>
+            <div class="inspection-cell">
+              <span>API 异常</span>
+              <strong>{{ detailTask.inspection.summary.api_failed }}</strong>
+            </div>
+            <div class="inspection-cell">
+              <span>已跳过</span>
+              <strong>{{ detailTask.inspection.summary.api_skipped }}</strong>
+            </div>
+          </div>
+          <el-table
+            v-if="detailTask.inspection.abnormal_items.length"
+            :data="detailTask.inspection.abnormal_items"
+            border
+            stripe
+            size="small"
+            max-height="220"
+          >
+            <el-table-column prop="row" label="行号" width="80" />
+            <el-table-column prop="type" label="类型" width="150" show-overflow-tooltip />
+            <el-table-column prop="message" label="异常内容" show-overflow-tooltip />
+            <el-table-column prop="level" label="等级" width="100">
+              <template #default="{ row }">
+                <el-tag :type="inspectionTagType(row.level)" size="small">
+                  {{ inspectionLabel(row.level) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
         <div v-if="detailTask.error_log && detailTask.error_log.length" class="detail-errors">
           <h4>错误记录</h4>
           <el-table :data="detailTask.error_log" border stripe size="small" max-height="240">
@@ -306,6 +423,36 @@ function statusLabel(status: string) {
     failed: '失败',
   }
   return map[status] || status
+}
+
+function inspectionTagType(level: string) {
+  const map: Record<string, string> = {
+    normal: 'success',
+    notice: 'info',
+    warning: 'warning',
+    critical: 'danger',
+  }
+  return map[level] || 'info'
+}
+
+function inspectionLabel(level: string) {
+  const map: Record<string, string> = {
+    normal: '正常',
+    notice: '提示',
+    warning: '需复核',
+    critical: '异常',
+  }
+  return map[level] || level
+}
+
+function apiStatusTagType(status: string) {
+  const map: Record<string, string> = {
+    success: 'success',
+    skipped: 'info',
+    warning: 'warning',
+    failed: 'danger',
+  }
+  return map[status] || 'info'
 }
 
 async function handleFileChange(file: UploadFile) {
@@ -495,6 +642,59 @@ onMounted(fetchHistory)
 
 .result-row {
   margin-bottom: 8px;
+}
+
+.inspection-section {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.inspection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.inspection-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.inspection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.inspection-cell {
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.inspection-cell span {
+  display: block;
+  margin-bottom: 6px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.inspection-cell strong {
+  color: #303133;
+  font-size: 22px;
+}
+
+.api-table {
+  margin-top: 12px;
 }
 
 .error-section {

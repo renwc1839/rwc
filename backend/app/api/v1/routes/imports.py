@@ -1,4 +1,6 @@
-﻿import os
+﻿import json
+import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +38,37 @@ def _map_ext_to_source_type(ext: str) -> str:
     return "excel"
 
 
+def _decode_import_log(raw_log: str | None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    if not raw_log:
+        return [], None
+    try:
+        payload = json.loads(raw_log)
+    except json.JSONDecodeError:
+        return [{"row": 0, "error": raw_log}], None
+    return ImportService.extract_errors(payload), ImportService.extract_inspection(payload)
+
+
+def _serialize_import_task(import_task) -> dict:
+    errors, inspection = _decode_import_log(import_task.error_log)
+    summary = inspection.get("summary", {}) if inspection else {}
+    return {
+        "id": import_task.id,
+        "admin_id": import_task.admin_id,
+        "source_name": import_task.source_name,
+        "source_type": import_task.source_type.value,
+        "status": import_task.status.value,
+        "total_records": import_task.total_records,
+        "success_records": import_task.success_records,
+        "failed_records": import_task.failed_records,
+        "error_log": errors,
+        "inspection": inspection,
+        "inspection_level": inspection.get("level") if inspection else "normal",
+        "abnormal_count": summary.get("abnormal", 0),
+        "created_at": import_task.created_at.isoformat(),
+        "updated_at": import_task.updated_at.isoformat(),
+    }
+
+
 @router.post("/upload")
 async def upload_import(
     file: UploadFile,
@@ -64,6 +97,7 @@ async def upload_import(
         file_content=content,
         landlord_id=current_user.id,
     )
+    _, inspection = _decode_import_log(import_task.error_log)
 
     await AuditService(session).create_log(
         user_id=current_user.id,
@@ -76,19 +110,12 @@ async def upload_import(
             "total": import_task.total_records,
             "success": import_task.success_records,
             "failed": import_task.failed_records,
+            "inspection_level": inspection.get("level") if inspection else "normal",
+            "abnormal_count": inspection.get("summary", {}).get("abnormal", 0) if inspection else 0,
         },
     )
 
-    return {
-        "id": import_task.id,
-        "source_name": import_task.source_name,
-        "source_type": import_task.source_type.value,
-        "status": import_task.status.value,
-        "total_records": import_task.total_records,
-        "success_records": import_task.success_records,
-        "failed_records": import_task.failed_records,
-        "created_at": import_task.created_at.isoformat(),
-    }
+    return _serialize_import_task(import_task)
 
 
 @router.get("/tasks")
@@ -102,20 +129,7 @@ async def list_tasks(
     tasks = await ImportService(session).list_tasks(
         skip=skip, limit=limit, status=status,
     )
-    return [
-        {
-            "id": t.id,
-            "admin_id": t.admin_id,
-            "source_name": t.source_name,
-            "source_type": t.source_type.value,
-            "status": t.status.value,
-            "total_records": t.total_records,
-            "success_records": t.success_records,
-            "failed_records": t.failed_records,
-            "created_at": t.created_at.isoformat(),
-        }
-        for t in tasks
-    ]
+    return [_serialize_import_task(t) for t in tasks]
 
 
 @router.get("/tasks/{task_id}")
@@ -128,28 +142,7 @@ async def get_task_detail(
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import task not found")
 
-    import json
-
-    error_log = task.error_log
-    if error_log:
-        try:
-            error_log = json.loads(error_log)
-        except json.JSONDecodeError:
-            pass
-
-    return {
-        "id": task.id,
-        "admin_id": task.admin_id,
-        "source_name": task.source_name,
-        "source_type": task.source_type.value,
-        "status": task.status.value,
-        "total_records": task.total_records,
-        "success_records": task.success_records,
-        "failed_records": task.failed_records,
-        "error_log": error_log,
-        "created_at": task.created_at.isoformat(),
-        "updated_at": task.updated_at.isoformat(),
-    }
+    return _serialize_import_task(task)
 
 
 @router.post("/tasks/{task_id}/retry")
@@ -172,22 +165,4 @@ async def retry_failed_records(
         import_task=task, landlord_id=current_user.id,
     )
 
-    import json
-
-    error_log = task.error_log
-    if error_log:
-        try:
-            error_log = json.loads(error_log)
-        except json.JSONDecodeError:
-            pass
-
-    return {
-        "id": task.id,
-        "source_name": task.source_name,
-        "status": task.status.value,
-        "total_records": task.total_records,
-        "success_records": task.success_records,
-        "failed_records": task.failed_records,
-        "error_log": error_log,
-        "updated_at": task.updated_at.isoformat(),
-    }
+    return _serialize_import_task(task)

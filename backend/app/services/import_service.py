@@ -6,12 +6,14 @@ import logging
 import threading
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.data_import import DataImport, ImportSourceType, ImportStatus
 from app.models.property import Property, PropertyStatus, PropertyType
+from app.services.geocoding_service import AmapGeocodingService
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class ImportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self._created_property_ids: list[int] = []
+        self._api_checks: list[dict[str, Any]] = []
 
     async def create_import_task(
         self,
@@ -81,6 +84,7 @@ class ImportService:
         landlord_id: int,
     ) -> DataImport:
         self._created_property_ids = []
+        self._api_checks = []
         import_task.status = ImportStatus.processing
         await self.session.commit()
 
@@ -99,22 +103,28 @@ class ImportService:
             import_task.total_records = len(rows)
             success = 0
             failed = 0
+            abnormal_items: list[dict[str, Any]] = []
 
             for idx, row in enumerate(rows):
+                abnormal_items.extend(self._inspect_raw_row(row, idx + 1))
                 try:
                     validated = self._validate_row(row, idx + 1)
-                    await self._insert_property(validated, landlord_id)
+                    await self._insert_property(validated, landlord_id, idx + 1)
                     success += 1
                 except ValueError as exc:
                     failed += 1
-                    errors.append({"row": idx + 1, "error": str(exc)})
+                    errors.append({"row": idx + 1, "error": str(exc), "data": row})
 
             import_task.success_records = success
             import_task.failed_records = failed
             import_task.status = ImportStatus.completed if failed == 0 else ImportStatus.completed
 
-            if errors:
-                import_task.error_log = json.dumps(errors, ensure_ascii=False)
+            inspection = self._build_inspection(
+                import_task=import_task,
+                row_count=len(rows),
+                abnormal_items=abnormal_items,
+            )
+            import_task.error_log = self._encode_import_log(errors, inspection)
 
             import_task.updated_at = datetime.now(timezone.utc)
             await self.session.commit()
@@ -127,9 +137,21 @@ class ImportService:
 
         except Exception as exc:
             import_task.status = ImportStatus.failed
-            import_task.error_log = json.dumps(
+            inspection = self._build_inspection(
+                import_task=import_task,
+                row_count=import_task.total_records,
+                abnormal_items=[
+                    {
+                        "level": "critical",
+                        "row": 0,
+                        "type": "import_crashed",
+                        "message": str(exc),
+                    }
+                ],
+            )
+            import_task.error_log = self._encode_import_log(
                 [{"row": 0, "error": str(exc)}],
-                ensure_ascii=False,
+                inspection,
             )
             await self.session.commit()
             logger.exception("Import task %s failed", import_task.id)
@@ -137,14 +159,16 @@ class ImportService:
 
     async def retry_failed(self, import_task: DataImport, landlord_id: int) -> DataImport:
         self._created_property_ids = []
+        self._api_checks = []
         if not import_task.error_log:
             return import_task
 
         try:
-            error_entries = json.loads(import_task.error_log)
+            raw_payload = json.loads(import_task.error_log)
         except json.JSONDecodeError:
             return import_task
 
+        error_entries = self.extract_errors(raw_payload)
         if not error_entries:
             return import_task
 
@@ -163,15 +187,19 @@ class ImportService:
                 continue
             try:
                 validated = self._validate_row(row_data, entry.get("row", 0))
-                await self._insert_property(validated, landlord_id)
+                await self._insert_property(validated, landlord_id, entry.get("row", 0))
                 success_count += 1
             except ValueError as exc:
-                new_errors.append({"row": entry.get("row", 0), "error": str(exc)})
+                new_errors.append({"row": entry.get("row", 0), "error": str(exc), "data": row_data})
 
         import_task.success_records += success_count
         import_task.failed_records = len(new_errors)
-        if new_errors:
-            import_task.error_log = json.dumps(new_errors, ensure_ascii=False)
+        inspection = self._build_inspection(
+            import_task=import_task,
+            row_count=import_task.total_records,
+            abnormal_items=[],
+        )
+        import_task.error_log = self._encode_import_log(new_errors, inspection)
         import_task.status = ImportStatus.completed
         import_task.updated_at = datetime.now(timezone.utc)
         await self.session.commit()
@@ -322,7 +350,7 @@ class ImportService:
 
         return validated
 
-    async def _insert_property(self, data: dict, landlord_id: int) -> None:
+    async def _insert_property(self, data: dict, landlord_id: int, row_num: int) -> None:
         # Deduplication: check by title + address
         existing = await self.session.scalar(
             select(Property).where(
@@ -352,7 +380,233 @@ class ImportService:
         )
         self.session.add(property_obj)
         await self.session.flush()
+        await self._fill_location_from_api(property_obj, row_num)
         self._created_property_ids.append(property_obj.id)
+
+    async def _fill_location_from_api(self, property_obj: Property, row_num: int) -> None:
+        if property_obj.latitude is not None and property_obj.longitude is not None:
+            self._api_checks.append(
+                {
+                    "row": row_num,
+                    "property_id": property_obj.id,
+                    "service": "amap_geocode",
+                    "status": "skipped",
+                    "message": "文件已提供经纬度，未重复调用地理编码 API",
+                }
+            )
+            return
+
+        try:
+            result = await AmapGeocodingService().geocode(
+                property_obj.address,
+                property_obj.district,
+            )
+            property_obj.latitude = result.latitude
+            property_obj.longitude = result.longitude
+            self._api_checks.append(
+                {
+                    "row": row_num,
+                    "property_id": property_obj.id,
+                    "service": "amap_geocode",
+                    "status": "success",
+                    "message": result.formatted_address or "地理编码成功",
+                }
+            )
+        except RuntimeError as exc:
+            self._api_checks.append(
+                {
+                    "row": row_num,
+                    "property_id": property_obj.id,
+                    "service": "amap_geocode",
+                    "status": "warning",
+                    "message": str(exc),
+                }
+            )
+        except Exception as exc:
+            self._api_checks.append(
+                {
+                    "row": row_num,
+                    "property_id": property_obj.id,
+                    "service": "amap_geocode",
+                    "status": "failed",
+                    "message": str(exc),
+                }
+            )
+
+    def _inspect_raw_row(self, row: dict, row_num: int) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        unknown_fields = sorted(set(row.keys()) - ALL_FIELDS)
+        if unknown_fields:
+            items.append(
+                {
+                    "level": "notice",
+                    "row": row_num,
+                    "type": "unknown_fields",
+                    "message": f"存在未识别字段：{', '.join(unknown_fields)}",
+                }
+            )
+
+        price_text = str(row.get("price_monthly", "")).strip()
+        if price_text:
+            try:
+                price = Decimal(price_text)
+                if price == 0:
+                    items.append(
+                        {
+                            "level": "warning",
+                            "row": row_num,
+                            "type": "zero_price",
+                            "message": "月租为 0，需要确认是否为录入错误",
+                        }
+                    )
+                elif price > Decimal("200000"):
+                    items.append(
+                        {
+                            "level": "warning",
+                            "row": row_num,
+                            "type": "price_outlier",
+                            "message": f"月租 {price} 明显偏高，需要复核",
+                        }
+                    )
+            except InvalidOperation:
+                pass
+
+        area_text = str(row.get("area_sqm", "")).strip()
+        if area_text:
+            try:
+                area = Decimal(area_text)
+                if area < Decimal("5") or area > Decimal("1000"):
+                    items.append(
+                        {
+                            "level": "warning",
+                            "row": row_num,
+                            "type": "area_outlier",
+                            "message": f"面积 {area} 平方米不在常见范围内",
+                        }
+                    )
+            except InvalidOperation:
+                items.append(
+                    {
+                        "level": "notice",
+                        "row": row_num,
+                        "type": "invalid_optional_area",
+                        "message": "面积字段无法解析，已按空值导入",
+                    }
+                )
+
+        for field_name in ("bedrooms", "bathrooms"):
+            value_text = str(row.get(field_name, "")).strip()
+            if not value_text:
+                continue
+            try:
+                value = int(value_text)
+                if value > 10:
+                    items.append(
+                        {
+                            "level": "warning",
+                            "row": row_num,
+                            "type": f"{field_name}_outlier",
+                            "message": f"{field_name}={value} 明显偏高，需要复核",
+                        }
+                    )
+            except ValueError:
+                items.append(
+                    {
+                        "level": "notice",
+                        "row": row_num,
+                        "type": f"invalid_optional_{field_name}",
+                        "message": f"{field_name} 无法解析，已按默认值导入",
+                    }
+                )
+
+        return items
+
+    def _build_inspection(
+        self,
+        *,
+        import_task: DataImport,
+        row_count: int,
+        abnormal_items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        api_failed = [
+            item for item in self._api_checks
+            if item.get("status") in {"failed", "warning"}
+        ]
+        if api_failed:
+            abnormal_items.extend(
+                {
+                    "level": "warning" if item.get("status") == "warning" else "critical",
+                    "row": item.get("row", 0),
+                    "type": "api_check_failed",
+                    "message": f"{item.get('service')}：{item.get('message')}",
+                    "property_id": item.get("property_id"),
+                }
+                for item in api_failed
+            )
+
+        failure_rate = (import_task.failed_records / row_count) if row_count else 0
+        if import_task.failed_records > 0:
+            abnormal_items.append(
+                {
+                    "level": "critical" if failure_rate >= 0.3 else "warning",
+                    "row": 0,
+                    "type": "failed_records",
+                    "message": f"{import_task.failed_records} 条房源导入失败，失败率 {failure_rate:.0%}",
+                }
+            )
+
+        levels = {item.get("level") for item in abnormal_items}
+        if "critical" in levels:
+            level = "critical"
+        elif "warning" in levels:
+            level = "warning"
+        elif "notice" in levels:
+            level = "notice"
+        else:
+            level = "normal"
+
+        return {
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "summary": {
+                "total": row_count,
+                "success": import_task.success_records,
+                "failed": import_task.failed_records,
+                "abnormal": len(abnormal_items),
+                "api_success": len([item for item in self._api_checks if item.get("status") == "success"]),
+                "api_failed": len(api_failed),
+                "api_skipped": len([item for item in self._api_checks if item.get("status") == "skipped"]),
+            },
+            "api_checks": self._api_checks,
+            "abnormal_items": abnormal_items,
+        }
+
+    @staticmethod
+    def _encode_import_log(errors: list[dict[str, Any]], inspection: dict[str, Any]) -> str | None:
+        if not errors and inspection.get("level") == "normal":
+            return None
+        return json.dumps(
+            {
+                "errors": errors,
+                "inspection": inspection,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def extract_errors(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            errors = payload.get("errors")
+            return errors if isinstance(errors, list) else []
+        return []
+
+    @staticmethod
+    def extract_inspection(payload: Any) -> dict[str, Any] | None:
+        if isinstance(payload, dict) and isinstance(payload.get("inspection"), dict):
+            return payload["inspection"]
+        return None
 
     @staticmethod
     def _dispatch_batch_embedding() -> None:
